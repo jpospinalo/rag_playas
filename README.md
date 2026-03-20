@@ -1,8 +1,9 @@
-# Poe-RAG
+# RAG Playas
 
-Sistema de **Recuperación Aumentada por Generación (RAG)** sobre cuentos de Edgar Allan Poe.
+Sistema de **Recuperación Aumentada por Generación (RAG)** sobre documentos jurídicos.
 
-- Ingesta y normalización de PDFs con **Docling**.
+- Conversión de PDFs a Markdown limpio con **Docling** (OCR, tablas, imágenes).
+- Ingesta y normalización de Markdown a JSONL.
 - Chunking y enriquecimiento semántico con **Gemini**.
 - Indexación vectorial en **ChromaDB** usando embeddings de **Ollama**.
 - Interfaz de chat en **Gradio**.
@@ -12,7 +13,7 @@ Sistema de **Recuperación Aumentada por Generación (RAG)** sobre cuentos de Ed
 ## Estructura del proyecto
 
 ```
-poe_rag/
+rag_playas/
 ├── pyproject.toml
 ├── uv.lock
 ├── .python-version
@@ -20,7 +21,8 @@ poe_rag/
 ├── Makefile
 │
 ├── data/
-│   ├── bronze/          ← PDFs originales
+│   ├── raw/             ← PDFs originales
+│   ├── bronze/          ← Markdown limpio (con imágenes en bronze/images/)
 │   ├── silver/          ← documentos normalizados (JSONL por archivo)
 │   │   └── chunked/     ← chunks para RAG
 │   └── gold/            ← chunks enriquecidos (resumen, keywords, entidades)
@@ -28,7 +30,8 @@ poe_rag/
 ├── src/
 │   ├── config.py        ← configuración centralizada desde variables de entorno
 │   ├── ingest/
-│   │   ├── loaders.py   ← carga PDFs y genera capa silver
+│   │   ├── pdf_to_md.py ← convierte PDFs (raw) a Markdown (bronze)
+│   │   ├── loaders.py   ← carga Markdown de bronze y genera capa silver
 │   │   ├── normalize.py ← limpieza y normalización de metadata
 │   │   ├── splitter.py  ← divide documentos en chunks
 │   │   └── enrich.py    ← enriquece chunks con Gemini (capa gold)
@@ -147,19 +150,22 @@ OLLAMA_EMBEDDING_MODEL=embeddinggemma
 ## Pipeline
 
 ```bash
-# 1) Ingesta y normalización → data/silver/
+# 1) Conversión PDF → Markdown → data/bronze/
+uv run python -m src.ingest.pdf_to_md
+
+# 2) Ingesta y normalización → data/silver/
 uv run python -m src.ingest.loaders
 
-# 2) Chunking → data/silver/chunked/
+# 3) Chunking → data/silver/chunked/
 uv run python -m src.ingest.splitter
 
-# 3) Enriquecimiento con Gemini → data/gold/
+# 4) Enriquecimiento con Gemini → data/gold/
 uv run python -m src.ingest.enrich
 
-# 4) Indexar en ChromaDB
+# 5) Indexar en ChromaDB
 uv run python -m src.backend.vectorstore
 
-# 5) Lanzar la interfaz Gradio
+# 6) Lanzar la interfaz Gradio
 uv run python -m src.frontend.gradio_app
 ```
 

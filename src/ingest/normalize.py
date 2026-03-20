@@ -1,7 +1,8 @@
-# src/normalize.py
+# src/ingest/normalize.py
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -10,66 +11,36 @@ from langchain_core.documents import Document
 
 def normalize_text(text: str) -> str:
     """
-    Limpieza mínima del texto:
+    Limpieza del texto preservando la estructura Markdown.
 
-    - Elimina espacios al inicio y al final de cada línea.
-    - Descarta líneas vacías.
-    - Elimina líneas de créditos/web conocidas
-      (por ejemplo: elejandria.com, 'gracias por leer este libro').
-    - Une las líneas restantes en una sola cadena separada por espacios.
+    - Elimina espacios en blanco al final de cada línea.
+    - Colapsa 3+ líneas en blanco consecutivas a máximo 2.
+    - Elimina caracteres de control no imprimibles (excepto saltos de línea y tabs).
     """
-    lines = text.splitlines()
-    cleaned_lines: List[str] = []
-
-    for line in lines:
-        l = line.strip()
-        if not l:
-            continue
-
-        low = l.lower()
-
-        # Líneas de créditos / web (reglas específicas)
-        if "elejandria.com" in low:
-            continue
-        if "gracias por leer este libro" in low:
-            continue
-
-        # Aquí se pueden añadir reglas adicionales si se detecta más ruido
-        cleaned_lines.append(l)
-
-    return " ".join(cleaned_lines)
+    text = re.sub(r"[^\S\n\t]", " ", text)
+    text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def normalize_metadata(meta: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normaliza la metadata partiendo del campo 'source'.
 
-    Comportamiento:
-    - Conserva solo el nombre de archivo en 'source'.
-    - Intenta inferir 'title' y 'author' a partir del patrón
-      'Titulo-Autor' en el nombre base del archivo.
-
-    Ejemplo:
-        source = 'El_cuervo-Allan_Poe_Edgar.pdf'
-        -> title  = 'El cuervo'
-        -> author = 'Allan Poe Edgar'
+    Conserva el nombre del archivo en 'source' y genera un 'title'
+    legible a partir del stem del archivo (reemplaza guiones bajos
+    por espacios).
     """
     src = meta.get("source", "")
     file_path = Path(src)
-    filename = file_path.name           # p.ej. "El_cuervo-Allan_Poe_Edgar.pdf"
-    stem = file_path.stem               # p.ej. "El_cuervo-Allan_Poe_Edgar"
+    filename = file_path.name
+    stem = file_path.stem
 
-    parts = stem.split("-")
-    title_raw = parts[0] if parts else stem
-    author_raw = "-".join(parts[1:]) if len(parts) > 1 else ""
-
-    title = title_raw.replace("_", " ").strip()
-    author = author_raw.replace("_", " ").strip()
+    title = stem.replace("_", " ").strip()
 
     return {
         "source": filename,
         "title": title or None,
-        "author": author or None,
     }
 
 

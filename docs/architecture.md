@@ -1,9 +1,13 @@
 # Arquitectura del pipeline RAG
 
 ```
-PDFs (data/bronze/)
+PDFs (data/raw/)
       │
-      ▼ loaders.py (DoclingLoader + normalize)
+      ▼ pdf_to_md.py (Docling + OCR + imágenes)
+data/bronze/*.md             ← documentos en Markdown limpio con imágenes
+data/bronze/images/          ← imágenes extraídas (figuras, tablas)
+      │
+      ▼ loaders.py (lectura MD + normalize)
 data/silver/*.jsonl          ← documentos normalizados por fuente
       │
       ▼ splitter.py (RecursiveCharacterTextSplitter)

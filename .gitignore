@@ -20,9 +20,11 @@ build/
 *.swo
 
 # 4) Datos generados por el pipeline
+data/
+data/raw/
+data/bronze/
 data/silver/
 data/gold/
-data/bronze/
 
 # 5) Resultados de evaluación (pueden contener datos sensibles)
 evaluation/ragas_eval_dataset.json
