@@ -26,7 +26,7 @@ logging.getLogger("onnxruntime").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 IMAGE_RESOLUTION_SCALE = 2.0
-MIN_IMAGE_PIXELS = 150
+MIN_IMAGE_PIXELS = 350
 MIN_BLOCK_REPEATS = 3
 
 # Rutas absolutas derivadas de la ubicación del archivo
