@@ -74,19 +74,38 @@ _HEADER_FOOTER_KEYWORDS: frozenset[str] = frozenset({
 # ------------------------------------------------------------------
 
 _INTERNAL_REF_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r'(?i)^\s*ver\s+p[aá]gs?\.?\s*\d'),
+    # ── page / folio references ────────────────────────────────────────────
+    # Optional leading footnote number: "3 Ver págs. 2-6..." or "Ver págs. 2-6..."
+    re.compile(r'(?i)^\s*\d{0,2}\s*ver\s+p[aá]gs?\.?\s*\d'),
+    re.compile(r'(?i)^\s*\d{0,2}\s*ver\s+considerando\b'),
     re.compile(r'(?i)^\s*p[aá]g[s.]?\s*\d+\s*[-–]\s*\d+\s*$'),
     re.compile(r'(?i)^\s*folio[s]?\s+\d+'),
     re.compile(r'(?i)^\s*cuaderno\s+\d+'),
     re.compile(r'(?i)\barchivo\s+\S+\.pdf\b'),
     re.compile(r'(?i)^\s*expediente\s+n[°º]?\s*\d'),
-    re.compile(r'(?i)^\s*p[aá]g\.?\s*\d+\s*$'),   # bare "Pág. 12" lines
-    # Footnote body lines referencing PDF files or OneDrive
-    re.compile(r'(?i)^\s*\d{0,2}\s*ver\s+pdf\b'),           # "9 Ver PDF 50..."
-    re.compile(r'(?i)\bver\s+pdf\s*:?\s*\d+\b'),             # "Ver PDF: 17 del..."
-    re.compile(r'(?i)^\s*\d{1,2}\s+https?://'),              # "33 https://..."
-    # Footnote body lines: leading number then "escuchar", "acta de audiencia", etc.
+    re.compile(r'(?i)^\s*p[aá]g\.?\s*\d+\s*$'),             # bare "Pág. 12" lines
+
+    # ── footnote body lines — PDF / OneDrive references ────────────────────
+    re.compile(r'(?i)^\s*\d{0,2}\s*ver\s+pdf\b'),            # "9 Ver PDF 50..."
+    re.compile(r'(?i)\bver\s+pdf\s*:?\s*\d+\b'),              # "Ver PDF: 17 del..."
+    re.compile(r'(?i)^\s*\d{1,2}\s+https?://'),               # "33 https://..."
     re.compile(r'(?i)^\s*\d{1,2}\s+escuchar\b'),
+
+    # ── numbered footnote body lines — common legal-citation starters ───────
+    # "1 En adelante DIMAR" / "2 En adelante DADSA"
+    re.compile(r'(?i)^\s*\d{1,2}\s+en adelante\b'),
+    # "15 Al respecto ver: Consejo de Estado..."
+    re.compile(r'(?i)^\s*\d{1,2}\s+al respecto\b'),
+    # "31 Corte Constitucional..." / "40 Consejo De Estado..." / "41 Sección Primera..."
+    re.compile(r'(?i)^\s*\d{1,2}\s+(corte constitucional|consejo de estado|sección primera|sala plena)\b'),
+    # "32 Vale la pena anotar que..."
+    re.compile(r'(?i)^\s*\d{1,2}\s+vale la pena\b'),
+    # "16 Presentación de la demanda: 21 de julio de 2016..."
+    re.compile(r'(?i)^\s*\d{1,2}\s+presentación de la demanda\b'),
+    # "38 T-519 de 1992..." / "39 SU-540 de 2007..."
+    re.compile(r'(?i)^\s*\d{1,2}\s+[A-Za-z]{1,3}-\d{3,}\b'),
+    # "37 M.P. Álvaro Tafur Galvis"
+    re.compile(r'(?i)^\s*\d{1,2}\s+m\.p\.\b'),
 ]
 
 # ------------------------------------------------------------------
@@ -256,17 +275,31 @@ def _remove_footnote_numbers(text: str) -> str:
       decreto, numeral, inciso, parágrafo, literal, ordinal,
       resolución → el número se conserva.
     """
-    # Pass 1: word + single trailing digit  (e.g. "DIMAR2", "término1")
+    # Words that ARE themselves legal citation terms (e.g. "artículo", "decreto").
+    # When the matched word is one of these, the trailing digit is likely an article
+    # number written without a space — leave it untouched.
+    _CITATION_WORD = re.compile(
+        r'(?i)^(ley|artículo|articulo|decreto|numeral|inciso|parágrafo'
+        r'|paragrafo|literal|ordinal|resolución|resolucion)$'
+    )
+
+    # Pass 1: word + 1–2 trailing digits  (e.g. "DIMAR2", "jurisdicción14")
     word_digit = re.compile(
-        r'([A-Za-záéíóúüñÁÉÍÓÚÜÑ]{2,})(\d{1})\b(?!\d)',
+        r'([A-Za-záéíóúüñÁÉÍÓÚÜÑ]{2,})(\d{1,2})\b(?!\d)',
         re.UNICODE,
     )
 
     def _replace_word(m: re.Match[str]) -> str:
+        word_part = m.group(1)
         preceding = text[max(0, m.start() - 40) : m.start()]
+        # Protect: preceding context ends with a legal reference word
         if _FOOTNOTE_LEGAL_CONTEXT.search(preceding):
             return m.group(0)
-        return m.group(1)
+        # Protect: the word itself is a legal citation term (e.g. "artículo14"
+        # where 14 could be the actual article number written without a space)
+        if _CITATION_WORD.match(word_part):
+            return m.group(0)
+        return word_part
 
     text = word_digit.sub(_replace_word, text)
 
