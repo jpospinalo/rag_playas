@@ -81,6 +81,12 @@ _INTERNAL_REF_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r'(?i)\barchivo\s+\S+\.pdf\b'),
     re.compile(r'(?i)^\s*expediente\s+n[°º]?\s*\d'),
     re.compile(r'(?i)^\s*p[aá]g\.?\s*\d+\s*$'),   # bare "Pág. 12" lines
+    # Footnote body lines referencing PDF files or OneDrive
+    re.compile(r'(?i)^\s*\d{0,2}\s*ver\s+pdf\b'),           # "9 Ver PDF 50..."
+    re.compile(r'(?i)\bver\s+pdf\s*:?\s*\d+\b'),             # "Ver PDF: 17 del..."
+    re.compile(r'(?i)^\s*\d{1,2}\s+https?://'),              # "33 https://..."
+    # Footnote body lines: leading number then "escuchar", "acta de audiencia", etc.
+    re.compile(r'(?i)^\s*\d{1,2}\s+escuchar\b'),
 ]
 
 # ------------------------------------------------------------------
@@ -133,10 +139,26 @@ def _fix_ocr_chars(text: str) -> str:
     Aplica la tabla ``_OCR_CORRECTIONS`` de más específica a menos
     específica.  Solo corrige patrones inequívocos (dígito rodeado de
     letras) para no alterar números legales ni años.
+
+    Las referencias a imágenes Markdown (``![...](...)``) se protegen
+    antes de aplicar las correcciones y se restauran después, evitando
+    que los hashes hexadecimales de los nombres de archivo se corrompan.
     """
-    for pattern, replacement in _OCR_CORRECTIONS:
-        text = pattern.sub(replacement, text)
-    return text
+    # Tokenise: split text into alternating [plain, image_ref, plain, ...]
+    img_token_re = re.compile(r'(!\[[^\]]*\]\([^)]+\))')
+    parts = img_token_re.split(text)
+
+    result_parts: list[str] = []
+    for i, part in enumerate(parts):
+        if i % 2 == 1:
+            # Odd indices are the captured image reference tokens — leave untouched
+            result_parts.append(part)
+        else:
+            for pattern, replacement in _OCR_CORRECTIONS:
+                part = pattern.sub(replacement, part)
+            result_parts.append(part)
+
+    return ''.join(result_parts)
 
 
 def _remove_noisy_lines(text: str, noise_ratio: float = NOISE_CHAR_RATIO) -> str:
@@ -234,18 +256,26 @@ def _remove_footnote_numbers(text: str) -> str:
       decreto, numeral, inciso, parágrafo, literal, ordinal,
       resolución → el número se conserva.
     """
-    pattern = re.compile(
+    # Pass 1: word + single trailing digit  (e.g. "DIMAR2", "término1")
+    word_digit = re.compile(
         r'([A-Za-záéíóúüñÁÉÍÓÚÜÑ]{2,})(\d{1})\b(?!\d)',
         re.UNICODE,
     )
 
-    def _replace(m: re.Match[str]) -> str:
+    def _replace_word(m: re.Match[str]) -> str:
         preceding = text[max(0, m.start() - 40) : m.start()]
         if _FOOTNOTE_LEGAL_CONTEXT.search(preceding):
             return m.group(0)
         return m.group(1)
 
-    return pattern.sub(_replace, text)
+    text = word_digit.sub(_replace_word, text)
+
+    # Pass 2: 4-digit year immediately followed by a single footnote digit
+    # e.g. "20228" = year 2022 + footnote marker 8
+    year_digit = re.compile(r'\b((?:1[89]\d\d|20\d\d))(\d)\b(?!\d)')
+    text = year_digit.sub(r'\1', text)
+
+    return text
 
 
 def _remove_internal_references(text: str) -> str:
@@ -253,11 +283,24 @@ def _remove_internal_references(text: str) -> str:
 
     Detecta y descarta líneas que coincidan con alguno de los patrones
     en ``_INTERNAL_REF_PATTERNS``:
-    - ``Ver pags. 2-6…``
+    - ``Ver pags. 2-6…`` / ``Ver PDF 50…``
     - Referencias a folios, cuadernos y archivos PDF
     - Líneas que son solo un número de página (``Pág. 12``)
     - Encabezados de expediente como línea aislada
+
+    También elimina el prefijo ``pág. N`` al inicio de líneas de
+    continuación (artefacto OCR donde el número de página impreso en el
+    documento queda adherido al texto que prosigue en esa página).
     """
+    # Strip inline "pág. N" prefixes that precede continuation text.
+    # Only removes the prefix when it is followed by a lowercase letter
+    # (i.e. the text continues — not a proper noun or chapter heading).
+    text = re.sub(
+        r'(?im)^\s*p[aá]g\.?\s*\d+\s+(?=[a-záéíóúüñ])',
+        '',
+        text,
+    )
+
     lines = text.splitlines()
     cleaned = [
         line
@@ -282,30 +325,16 @@ def _clean_markdown(text: str) -> str:
 def _remove_repeated_blocks(text: str, min_occurrences: int = MIN_BLOCK_REPEATS) -> str:
     """Detecta y elimina bloques de texto repetidos (encabezados/pies de página).
 
-    Dos criterios de eliminación:
-
-    1. **Repetición**: bloques que aparecen ``≥ min_occurrences`` veces
-       (umbral reducido a 2 para mayor sensibilidad).
-    2. **Heurística de aparición única**: bloques cortos (≤ 120 chars)
-       que contienen palabras clave típicas de encabezados jurídicos
-       (radicación, tribunal, expediente, magistrado, etc.) se eliminan
-       aunque aparezcan una sola vez.
-
-    La comparación normaliza las referencias a imágenes para que bloques
-    idénticos salvo por el nombre del fichero de imagen se reconozcan
-    como duplicados.
+    Elimina bloques que aparecen ``≥ min_occurrences`` veces (umbral = 2
+    para mayor sensibilidad).  La comparación normaliza las referencias a
+    imágenes para que bloques idénticos salvo por el nombre del fichero de
+    imagen se reconozcan como duplicados.
     """
     paragraphs = text.split("\n\n")
 
     def _normalize(block: str) -> str:
         s = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", block)
         return s.strip()
-
-    def _is_header_footer_heuristic(norm: str) -> bool:
-        if len(norm) > 120:
-            return False
-        lower = norm.lower()
-        return any(kw in lower for kw in _HEADER_FOOTER_KEYWORDS)
 
     counts: Counter[str] = Counter(_normalize(p) for p in paragraphs if _normalize(p))
 
@@ -315,8 +344,6 @@ def _remove_repeated_blocks(text: str, min_occurrences: int = MIN_BLOCK_REPEATS)
     for p in paragraphs:
         norm = _normalize(p)
         if norm in repeated:
-            continue
-        if _is_header_footer_heuristic(norm):
             continue
         result.append(p)
 
@@ -425,14 +452,14 @@ def convert_pdfs_to_markdown() -> list[Path]:
     2. ``save_as_markdown`` escribe el ``.md`` y las imágenes referenciadas.
     3. Pipeline de post-procesado (en orden):
 
-       1. ``_fix_ocr_chars``          — corrección de artefactos OCR
-       2. ``_remove_noisy_lines``     — eliminación de líneas con ruido
-       3. ``_reconstruct_paragraphs`` — reconstrucción de párrafos cortados
-       4. ``_remove_footnote_numbers``— eliminación de marcadores de nota
-       5. ``_remove_internal_references`` — referencias a páginas/folios
-       6. ``_remove_repeated_blocks`` — encabezados y pies repetidos
-       7. ``_filter_images``          — filtrado por tamaño/varianza/contexto
-       8. ``_clean_markdown``         — limpieza estructural final
+       1. ``_fix_ocr_chars``              — corrección de artefactos OCR
+       2. ``_remove_noisy_lines``         — eliminación de líneas con ruido
+       3. ``_remove_internal_references`` — referencias a páginas/folios (antes de unir párrafos)
+       4. ``_reconstruct_paragraphs``     — reconstrucción de párrafos cortados
+       5. ``_remove_footnote_numbers``    — eliminación de marcadores de nota
+       6. ``_remove_repeated_blocks``     — encabezados y pies repetidos
+       7. ``_filter_images``              — filtrado por tamaño/varianza/contexto
+       8. ``_clean_markdown``             — limpieza estructural final
 
     Devuelve la lista de archivos ``.md`` generados.
     """
@@ -463,9 +490,9 @@ def convert_pdfs_to_markdown() -> list[Path]:
         md_text = md_path.read_text(encoding="utf-8")
         md_text = _fix_ocr_chars(md_text)
         md_text = _remove_noisy_lines(md_text)
+        md_text = _remove_internal_references(md_text)  # before paragraph join
         md_text = _reconstruct_paragraphs(md_text)
         md_text = _remove_footnote_numbers(md_text)
-        md_text = _remove_internal_references(md_text)
         md_text = _remove_repeated_blocks(md_text)
         md_text = _filter_images(md_text, md_path)
         md_text = _clean_markdown(md_text)
