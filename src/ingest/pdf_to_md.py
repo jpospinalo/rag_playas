@@ -21,10 +21,12 @@ import logging
 import re
 import statistics
 import time
+import unicodedata
 import warnings
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from urllib.parse import unquote
 
 from PIL import Image
 
@@ -51,6 +53,11 @@ MIN_BLOCK_REPEATS = 2
 NOISE_CHAR_RATIO = 0.45
 IMAGE_LOW_VARIANCE = 100.0
 IMAGE_CONTEXT_WINDOW = 300
+IMAGE_REQUIRE_SEMANTIC_CONTEXT = True
+IMAGE_MIN_AREA_KEEP_WITHOUT_CONTEXT = 250_000
+IMAGE_FALLBACK_KEEP_ENABLED = True
+IMAGE_FALLBACK_MAX_KEEP = 2
+IMAGE_FALLBACK_MIN_AREA = 160_000
 
 # Thresholds for document profiling
 LEGAL_DENSITY_THRESHOLD = 0.15
@@ -111,7 +118,9 @@ _FOOTNOTE_LEGAL_CONTEXT: re.Pattern[str] = re.compile(
 
 _IMAGE_CONTEXT_RE: re.Pattern[str] = re.compile(
     r"(?i)\b(figura|tabla|imagen|gráfico|grafico|ilustración"
-    r"|ilustracion|foto|fotografía|fotografia|esquema|diagrama)\b"
+    r"|ilustracion|foto|fotografía|fotografia|esquema|diagrama"
+    r"|mapa|mapas|plano|planos|croquis|anexo|anexos|cronograma"
+    r"|fase|fases)\b"
 )
 
 
@@ -183,28 +192,65 @@ _LEGAL_CITATION_PATTERNS: list[re.Pattern[str]] = [
 
 # Coastal/beach law semantic terms
 _COASTAL_TERMS: list[str] = [
-    "playa", "playas", "bahía", "bahia",
-    "bajamar", "litoral", "erosión", "erosion",
-    "ocupación", "ocupacion",
-    "espacio público", "espacio publico",
-    "dimar", "concesión marítima", "concesion maritima",
-    "bienes de uso público", "bienes de uso publico",
-    "recuperación costera", "recuperacion costera",
-    "servidumbre", "protección litoral", "proteccion litoral",
-    "zona costera", "franja de playa",
-    "línea de costa", "linea de costa",
-    "pleamar", "marea", "puerto", "muelle", "embarcadero",
-    "zona de bajamar", "terrenos de bajamar",
-    "bien público", "bien publico",
-    "dominio público", "dominio publico",
-    "restinga", "manglar", "estuario", "acantilado",
-    "vertimiento", "vertimientos", "aguas residuales",
-    "emisario submarino", "emisario",
-    "arrecife", "arrecifes", "coral", "corales",
-    "colector pluvial", "colector",
-    "contaminación marina", "contaminacion marina",
-    "pradera marina", "praderas marinas", "pastos marinos",
-    "capitanía de puerto", "corpamag",
+    "playa",
+    "playas",
+    "bahía",
+    "bahia",
+    "bajamar",
+    "litoral",
+    "erosión",
+    "erosion",
+    "ocupación",
+    "ocupacion",
+    "espacio público",
+    "espacio publico",
+    "dimar",
+    "concesión marítima",
+    "concesion maritima",
+    "bienes de uso público",
+    "bienes de uso publico",
+    "recuperación costera",
+    "recuperacion costera",
+    "servidumbre",
+    "protección litoral",
+    "proteccion litoral",
+    "zona costera",
+    "franja de playa",
+    "línea de costa",
+    "linea de costa",
+    "pleamar",
+    "marea",
+    "puerto",
+    "muelle",
+    "embarcadero",
+    "zona de bajamar",
+    "terrenos de bajamar",
+    "bien público",
+    "bien publico",
+    "dominio público",
+    "dominio publico",
+    "restinga",
+    "manglar",
+    "estuario",
+    "acantilado",
+    "vertimiento",
+    "vertimientos",
+    "aguas residuales",
+    "emisario submarino",
+    "emisario",
+    "arrecife",
+    "arrecifes",
+    "coral",
+    "corales",
+    "colector pluvial",
+    "colector",
+    "contaminación marina",
+    "contaminacion marina",
+    "pradera marina",
+    "praderas marinas",
+    "pastos marinos",
+    "capitanía de puerto",
+    "corpamag",
 ]
 
 _COASTAL_PATTERN: re.Pattern[str] = re.compile(
@@ -593,7 +639,8 @@ def _score_internal_reference(line: str) -> int:
     # Corte Constitucional / Consejo de Estado / Sección footnotes
     if re.search(
         r"(?i)^\s*\d{1,2}\s+(corte constitucional|consejo de estado"
-        r"|sección primera|sala plena|sala de lo contencioso)\b", line
+        r"|sección primera|sala plena|sala de lo contencioso)\b",
+        line,
     ):
         score += 3
     # "En cumplimiento de la Ley..." — long meta-footnote
@@ -619,7 +666,8 @@ def _score_internal_reference(line: str) -> int:
     # Footnote-embedded citation metadata (from fragmented multi-column OCR)
     if re.match(
         r"(?i)^\s*\d{0,2}\s*(radicaci[oó]n|demandante|demandados?|ponente"
-        r"|magistrad[oa]|secretari[oa])\s*:", stripped
+        r"|magistrad[oa]|secretari[oa])\s*:",
+        stripped,
     ):
         if len(stripped) < 120:
             score += 3
@@ -674,18 +722,18 @@ _CITATION_ANCHOR_RE = re.compile(
 
 _CITATION_FRAGMENT_RE = re.compile(
     r"(?i)^("
-    r"\d{5}-\d+\.\s*Demandante:|"           # "00987-01.  Demandante:"
-    r"General\s+de\b|"                       # "General de"
-    r"Delegad[oa]\s+para\b|"                 # "Delegada para"
-    r"la\s+Naci[oó]n$|"                      # "la Nación"
-    r"Procuradur[ií]a$|"                     # "Procuraduría"
-    r"Nacional\s+de\s+Licencias\b|"          # "Nacional de Licencias"
-    r"-$|"                                   # bare dash
+    r"\d{5}-\d+\.\s*Demandante:|"  # "00987-01.  Demandante:"
+    r"General\s+de\b|"  # "General de"
+    r"Delegad[oa]\s+para\b|"  # "Delegada para"
+    r"la\s+Naci[oó]n$|"  # "la Nación"
+    r"Procuradur[ií]a$|"  # "Procuraduría"
+    r"Nacional\s+de\s+Licencias\b|"  # "Nacional de Licencias"
+    r"-$|"  # bare dash
     r"Ambientales\s+y\s+Agrarios|"
     r"Asuntos$|"
-    r"Naci[oó]n\s*-\s*Ministerio\b|"        # "Nación - Ministerio..."
-    r".*-\s*ANLA\b|"                         # "...ANLA - otros"
-    r".*-\s*otros\.\s*$"                     # "...Autoridad - otros."
+    r"Naci[oó]n\s*-\s*Ministerio\b|"  # "Nación - Ministerio..."
+    r".*-\s*ANLA\b|"  # "...ANLA - otros"
+    r".*-\s*otros\.\s*$"  # "...Autoridad - otros."
     r")"
 )
 
@@ -1312,10 +1360,10 @@ def _strip_frontmatter_noise(text: str) -> str:
     # alphabetic, not all-caps noise, and not phone numbers / handles).
     _junk_re = re.compile(
         r"^("
-        r"\d{7,}"                        # phone numbers
-        r"|[A-Z@#·\s\-\.\d]{3,50}$"     # ALL-CAPS noise / handles
-        r"|.{0,5}$"                       # very short fragments
-        r"|.*[@#].*"                       # social media handles
+        r"\d{7,}"  # phone numbers
+        r"|[A-Z@#·\s\-\.\d]{3,50}$"  # ALL-CAPS noise / handles
+        r"|.{0,5}$"  # very short fragments
+        r"|.*[@#].*"  # social media handles
         r")",
         re.MULTILINE,
     )
@@ -1393,11 +1441,11 @@ def _fix_ocr_chars(text: str) -> str:
 
 _INSTITUTIONAL_NOISE_RE = re.compile(
     r"^("
-    r"\d{7,}\s*\S{0,30}$"              # phone number + short label
-    r"|[A-Za-z]*@\S+$"                  # social media handle
-    r"|[XxYy][\s@]?\S{0,30}$"          # platform handle "X@...", "YeuTube"
+    r"\d{7,}\s*\S{0,30}$"  # phone number + short label
+    r"|[A-Za-z]*@\S+$"  # social media handle
+    r"|[XxYy][\s@]?\S{0,30}$"  # platform handle "X@...", "YeuTube"
     r"|(?:YouTube|YeuTube|Facebook|Instagram|Twitter)\b.*$"
-    r"|[a-z]\d{2}[a-z]\w{0,30}$"       # institutional handle "d01tribunalmag"
+    r"|[a-z]\d{2}[a-z]\w{0,30}$"  # institutional handle "d01tribunalmag"
     r")",
     re.IGNORECASE,
 )
@@ -1509,7 +1557,7 @@ def _should_merge_paragraphs(current: str, next_para: str) -> bool:
     if re.search(r"[.;:?!]['\u2019\u201D\"]\s*$", tail):
         return False
 
-    ends_without_terminator = last_char not in '.;:?!"\')»'
+    ends_without_terminator = last_char not in ".;:?!\"')»"
     next_starts_lower = first_char.islower()
 
     if ends_without_terminator and next_starts_lower:
@@ -1569,10 +1617,10 @@ def _remove_footnote_numbers(text: str) -> str:
     #   word + 1+ spaces + 1-2 digit number + word-boundary (not more digits)
     #   Only match when the digit is NOT preceded by a legal keyword.
     word_space_digit = re.compile(
-        r"([A-Za-záéíóúüñÁÉÍÓÚÜÑ]{2,})"   # word of >= 2 letters
-        r"(\s+)"                              # one or more spaces
-        r"(\d{1,2})"                          # 1-2 digit footnote marker
-        r"(?=\s|[.,;:!?\)\]\"\']|$)"         # followed by space/punct/end
+        r"([A-Za-záéíóúüñÁÉÍÓÚÜÑ]{2,})"  # word of >= 2 letters
+        r"(\s+)"  # one or more spaces
+        r"(\d{1,2})"  # 1-2 digit footnote marker
+        r"(?=\s|[.,;:!?\)\]\"\']|$)"  # followed by space/punct/end
     )
 
     def _replace_spaced(m: re.Match[str]) -> str:
@@ -1594,9 +1642,9 @@ def _remove_footnote_numbers(text: str) -> str:
 
     # Pass 3: closing-paren/quote + spaced footnote — "INVEMAR) 13" → "INVEMAR)"
     paren_space_fn = re.compile(
-        r"([)\]\u2019\u201D'\"])"      # closing bracket/quote
+        r"([)\]\u2019\u201D'\"])"  # closing bracket/quote
         r"(\s+)"
-        r"(\d{1,2})"                    # footnote marker
+        r"(\d{1,2})"  # footnote marker
         r"(?=\s|[.,;:!?\)\]]|$)"
     )
     text = paren_space_fn.sub(r"\1", text)
@@ -1607,18 +1655,18 @@ def _remove_footnote_numbers(text: str) -> str:
 
     # Pass 5: year/number + spaced footnote — "2021 32 ," → "2021,"
     year_space_fn = re.compile(
-        r"(\b(?:1[89]\d\d|20\d\d))"   # 4-digit year
+        r"(\b(?:1[89]\d\d|20\d\d))"  # 4-digit year
         r"(\s+)"
-        r"(\d{1,2})"                   # footnote marker
+        r"(\d{1,2})"  # footnote marker
         r"(?=\s*[.,;:!?\)\]]|\s+[a-záéíóúüñ]|\s*$)"
     )
     text = year_space_fn.sub(r"\1", text)
 
     # Pass 6: hyphenated-code + spaced footnote — "CPT-CAM-012-21 34" → "CPT-CAM-012-21"
     code_space_fn = re.compile(
-        r"(\b[A-Z][\w-]*-\d{2,4})"    # code ending in digits "CPT-CAM-012-21"
+        r"(\b[A-Z][\w-]*-\d{2,4})"  # code ending in digits "CPT-CAM-012-21"
         r"(\s+)"
-        r"(\d{1,2})"                   # footnote marker
+        r"(\d{1,2})"  # footnote marker
         r"(?=\s|[.,;:!?\)\]]|$)"
     )
     text = code_space_fn.sub(r"\1", text)
@@ -1663,7 +1711,10 @@ def _relativize_image_refs(md_text: str, md_path: Path) -> str:
         try:
             abs_img = Path(raw_path).resolve()
             rel = abs_img.relative_to(md_dir)
-            return f"![{alt}]({rel.as_posix()})"
+            rel_ref = rel.as_posix()
+            if not rel_ref.startswith(("./", "../")):
+                rel_ref = f"./{rel_ref}"
+            return f"![{alt}]({rel_ref})"
         except (ValueError, OSError):
             return m.group(0)
 
@@ -1679,12 +1730,34 @@ def _filter_images(
     md_dir = md_path.parent
     img_pattern = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 
+    def _resolve_image_path(img_ref: str) -> Path:
+        cleaned_ref = img_ref.strip().strip("<>").strip("\"'")
+        decoded_ref = unquote(cleaned_ref)
+        candidates = [decoded_ref]
+        candidates.append(unicodedata.normalize("NFC", decoded_ref))
+        candidates.append(unicodedata.normalize("NFD", decoded_ref))
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                candidate_path = (md_dir / candidate).resolve()
+            except OSError:
+                continue
+            if candidate_path.exists() and candidate_path.is_file():
+                return candidate_path
+
+        return (md_dir / decoded_ref).resolve()
+
     seen_hashes: set[str] = set()
-    refs_to_remove: list[str] = []
+    reason_counts: Counter[str] = Counter()
+    analyzed: list[dict[str, object]] = []
 
     for match in img_pattern.finditer(md_text):
         img_ref = match.group(1)
-        img_file = (md_dir / img_ref).resolve()
+        img_file = _resolve_image_path(img_ref)
 
         if not img_file.exists() or not img_file.is_file():
             continue
@@ -1692,35 +1765,83 @@ def _filter_images(
         try:
             with Image.open(img_file) as img:
                 w, h = img.size
+                area = w * h
                 img_hash = hashlib.md5(img.tobytes()).hexdigest()
                 gray = img.convert("L")
                 pixels = list(gray.getdata())
         except Exception:
             continue
 
-        should_remove = False
+        remove_reason: str | None = None
 
         if w < min_pixels and h < min_pixels:
-            should_remove = True
+            remove_reason = "too_small"
         elif img_hash in seen_hashes:
-            should_remove = True
+            remove_reason = "duplicate_hash"
         else:
             seen_hashes.add(img_hash)
 
             if len(pixels) > 1 and statistics.variance(pixels) < IMAGE_LOW_VARIANCE:
-                should_remove = True
+                remove_reason = "low_variance"
 
-            if not should_remove:
+            if remove_reason is None and IMAGE_REQUIRE_SEMANTIC_CONTEXT:
                 pos = match.start()
                 window_start = max(0, pos - IMAGE_CONTEXT_WINDOW)
                 window_end = min(len(md_text), pos + IMAGE_CONTEXT_WINDOW)
                 context = md_text[window_start:window_end]
-                if not _IMAGE_CONTEXT_RE.search(context):
-                    should_remove = True
+                has_semantic_context = _IMAGE_CONTEXT_RE.search(context) is not None
+                if not has_semantic_context and area < IMAGE_MIN_AREA_KEEP_WITHOUT_CONTEXT:
+                    remove_reason = "no_semantic_context"
 
-        if should_remove:
-            refs_to_remove.append(match.group(0))
-            img_file.unlink(missing_ok=True)
+        analyzed.append(
+            {
+                "token": match.group(0),
+                "file": img_file,
+                "area": area,
+                "remove_reason": remove_reason,
+            }
+        )
+
+    if (
+        IMAGE_FALLBACK_KEEP_ENABLED
+        and analyzed
+        and all(item["remove_reason"] is not None for item in analyzed)
+    ):
+        fallback_candidates = [
+            item for item in analyzed if int(item["area"]) >= IMAGE_FALLBACK_MIN_AREA
+        ]
+        fallback_candidates.sort(key=lambda item: int(item["area"]), reverse=True)
+        for item in fallback_candidates[: max(1, IMAGE_FALLBACK_MAX_KEEP)]:
+            item["remove_reason"] = None
+            item["fallback_reason"] = "fallback_keep_large"
+
+    refs_to_remove: list[str] = []
+    files_to_remove: list[Path] = []
+    kept_count = 0
+
+    for item in analyzed:
+        fallback_reason = item.get("fallback_reason")
+        if fallback_reason:
+            reason_counts[str(fallback_reason)] += 1
+
+        if item["remove_reason"] is None:
+            kept_count += 1
+            continue
+
+        reason_counts[str(item["remove_reason"])] += 1
+        refs_to_remove.append(str(item["token"]))
+        files_to_remove.append(item["file"])
+
+    for img_file in files_to_remove:
+        img_file.unlink(missing_ok=True)
+
+    logger.info(
+        "Image filtering stats: total=%d kept=%d removed=%d reasons=%s",
+        len(analyzed),
+        kept_count,
+        len(files_to_remove),
+        dict(reason_counts),
+    )
 
     for ref in refs_to_remove:
         md_text = md_text.replace(ref, "")
@@ -1729,17 +1850,17 @@ def _filter_images(
 
 
 _HEADING_BODY_RE = re.compile(
-    r"^(#{1,6}\s+"                      # markdown heading prefix
+    r"^(#{1,6}\s+"  # markdown heading prefix
     r"(?:"
-    r"[IVXivx]+\."                      # Roman numeral section "II."
+    r"[IVXivx]+\."  # Roman numeral section "II."
     r"|"
-    r"\d+(?:\.\d+)*\.?"                 # Decimal section "1.1." / "2.3.1"
+    r"\d+(?:\.\d+)*\.?"  # Decimal section "1.1." / "2.3.1"
     r")?"
     r"\s*"
-    r"[A-ZÁÉÍÓÚÜÑ][^.]*?"              # Title text (up to first period)
-    r"\.)"                              # Closing period of the title
-    r"\s+"                              # Whitespace gap
-    r"([A-ZÁÉÍÓÚÜÑ]"                    # Body starts with uppercase
+    r"[A-ZÁÉÍÓÚÜÑ][^.]*?"  # Title text (up to first period)
+    r"\.)"  # Closing period of the title
+    r"\s+"  # Whitespace gap
+    r"([A-ZÁÉÍÓÚÜÑ]"  # Body starts with uppercase
     r"[A-Za-záéíóúüñÁÉÍÓÚÜÑ\s,()]{10,})"  # at least 10 chars of prose
 )
 
@@ -1769,7 +1890,7 @@ def _split_heading_body(text: str) -> str:
         m = _HEADING_BODY_RE.match(line)
         if m:
             result.append(m.group(1))
-            body = m.group(2) + line[m.end():]
+            body = m.group(2) + line[m.end() :]
             body = _maybe_prepend_number(body, lines, i + 1)
             result.append(body)
         else:
@@ -1877,15 +1998,16 @@ def convert_pdfs_to_markdown() -> list[Path]:
             conv_result = converter.convert(pdf_path)
 
             # Step 2: Initial markdown extraction.
-            # Docling requires an *absolute* ``md_path`` to correctly
-            # place the ``{stem}_artifacts/`` image directory next to
-            # the ``.md`` file.  With relative paths it doubles the
-            # directory nesting.  After saving we relativize image refs
-            # so the markdown stays portable.
+            # Keep ``{stem}.md`` at bronze root while writing image
+            # artifacts under ``{stem}/assets`` next to it.
             doc_stem = pdf_path.stem
+            doc_dir = BRONZE_DIR / doc_stem
+            assets_dir = doc_dir / "assets"
+            doc_dir.mkdir(parents=True, exist_ok=True)
             md_path = (BRONZE_DIR / f"{doc_stem}.md").resolve()
             conv_result.document.save_as_markdown(
                 md_path,
+                artifacts_dir=assets_dir,
                 image_mode=ImageRefMode.REFERENCED,
             )
 
@@ -1912,13 +2034,13 @@ def convert_pdfs_to_markdown() -> list[Path]:
             # Step 8: Write outputs
             md_path.write_text(cleaned_md, encoding="utf-8")
 
-            quality_path = BRONZE_DIR / f"{doc_stem}.quality.json"
+            quality_path = doc_dir / f"{doc_stem}.quality.json"
             quality_path.write_text(
                 json.dumps(asdict(quality), indent=2, ensure_ascii=False), encoding="utf-8"
             )
 
             if entities:
-                entities_path = BRONZE_DIR / f"{doc_stem}.entities.json"
+                entities_path = doc_dir / f"{doc_stem}.entities.json"
                 entities_path.write_text(
                     json.dumps(entities, indent=2, ensure_ascii=False), encoding="utf-8"
                 )
@@ -1972,9 +2094,13 @@ def process_single_pdf(
         conv_result = converter.convert(pdf_path)
 
         doc_stem = pdf_path.stem
+        doc_dir = output_dir / doc_stem
+        assets_dir = doc_dir / "assets"
+        doc_dir.mkdir(parents=True, exist_ok=True)
         md_path = (output_dir / f"{doc_stem}.md").resolve()
         conv_result.document.save_as_markdown(
             md_path,
+            artifacts_dir=assets_dir,
             image_mode=ImageRefMode.REFERENCED,
         )
 
@@ -1991,13 +2117,13 @@ def process_single_pdf(
 
         md_path.write_text(cleaned_md, encoding="utf-8")
 
-        quality_path = output_dir / f"{doc_stem}.quality.json"
+        quality_path = doc_dir / f"{doc_stem}.quality.json"
         quality_path.write_text(
             json.dumps(asdict(quality), indent=2, ensure_ascii=False), encoding="utf-8"
         )
 
         if entities:
-            entities_path = output_dir / f"{doc_stem}.entities.json"
+            entities_path = doc_dir / f"{doc_stem}.entities.json"
             entities_path.write_text(
                 json.dumps(entities, indent=2, ensure_ascii=False), encoding="utf-8"
             )
