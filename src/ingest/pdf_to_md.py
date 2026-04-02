@@ -25,7 +25,6 @@ import warnings
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from PIL import Image
 
@@ -184,45 +183,28 @@ _LEGAL_CITATION_PATTERNS: list[re.Pattern[str]] = [
 
 # Coastal/beach law semantic terms
 _COASTAL_TERMS: list[str] = [
-    "playa",
-    "playas",
-    "bajamar",
-    "litoral",
-    "erosión",
-    "erosion",
-    "ocupación",
-    "ocupacion",
-    "espacio público",
-    "espacio publico",
-    "dimar",
-    "concesión marítima",
-    "concesion maritima",
-    "bienes de uso público",
-    "bienes de uso publico",
-    "recuperación costera",
-    "recuperacion costera",
-    "servidumbre",
-    "protección litoral",
-    "proteccion litoral",
-    "zona costera",
-    "franja de playa",
-    "línea de costa",
-    "linea de costa",
-    "pleamar",
-    "marea",
-    "puerto",
-    "muelle",
-    "embarcadero",
-    "zona de bajamar",
-    "terrenos de bajamar",
-    "bien público",
-    "bien publico",
-    "dominio público",
-    "dominio publico",
-    "restinga",
-    "manglar",
-    "estuario",
-    "acantilado",
+    "playa", "playas", "bahía", "bahia",
+    "bajamar", "litoral", "erosión", "erosion",
+    "ocupación", "ocupacion",
+    "espacio público", "espacio publico",
+    "dimar", "concesión marítima", "concesion maritima",
+    "bienes de uso público", "bienes de uso publico",
+    "recuperación costera", "recuperacion costera",
+    "servidumbre", "protección litoral", "proteccion litoral",
+    "zona costera", "franja de playa",
+    "línea de costa", "linea de costa",
+    "pleamar", "marea", "puerto", "muelle", "embarcadero",
+    "zona de bajamar", "terrenos de bajamar",
+    "bien público", "bien publico",
+    "dominio público", "dominio publico",
+    "restinga", "manglar", "estuario", "acantilado",
+    "vertimiento", "vertimientos", "aguas residuales",
+    "emisario submarino", "emisario",
+    "arrecife", "arrecifes", "coral", "corales",
+    "colector pluvial", "colector",
+    "contaminación marina", "contaminacion marina",
+    "pradera marina", "praderas marinas", "pastos marinos",
+    "capitanía de puerto", "corpamag",
 ]
 
 _COASTAL_PATTERN: re.Pattern[str] = re.compile(
@@ -398,60 +380,35 @@ def adaptive_cleanup(
     profile: LegalDocumentProfile,
     md_path: Path | None = None,
 ) -> str:
+    """Apply the full cleanup pipeline to legal document markdown.
+
+    Pipeline order (all steps always execute for legal documents):
+
+    1. ``_strip_frontmatter_noise``    — remove OCR junk before first heading
+    2. ``_fix_ocr_chars``              — correct OCR character artifacts
+    3. ``_remove_noisy_lines``         — drop high-noise lines
+    4. ``repair_layout_breaks``        — merge broken lines from multi-column
+    5. ``_remove_internal_references_scored`` — footnote bodies & page refs
+    6. ``_remove_figure_legend_clusters``     — map/figure label clusters
+    7. ``_reconstruct_paragraphs``     — rejoin split paragraphs
+    8. ``_remove_footnote_numbers``    — strip footnote markers from words
+    9. ``_remove_repeated_blocks``     — deduplicate headers/footers
+    10. ``_filter_images``             — filter irrelevant images
+    11. ``_clean_markdown``            — final structural normalization
     """
-    Apply cleanup steps adaptively based on document profile.
-
-    Always runs:
-    - OCR correction
-    - Noisy line cleanup
-    - Markdown normalization
-
-    Conditionally runs:
-    - Repeated-block removal (if repeated headers/footers detected)
-    - Aggressive footnote cleanup (if footnote density is high)
-    - Internal-reference cleanup (if legal citation density exceeds threshold)
-    - Layout repair (if multi-column suspected)
-    """
-    logger.debug(
-        f"Adaptive cleanup - Profile: legal_density={profile.legal_density:.2f}, "
-        f"footnote_density={profile.footnote_density:.2f}, "
-        f"ocr_noise={profile.ocr_noise_score:.2f}"
-    )
-
-    # ALWAYS: OCR correction
+    md_text = _strip_frontmatter_noise(md_text)
     md_text = _fix_ocr_chars(md_text)
-
-    # ALWAYS: Noisy line cleanup
     md_text = _remove_noisy_lines(md_text)
-
-    # CONDITIONAL: Layout repair before paragraph reconstruction if multi-column
-    if profile.multi_column:
-        logger.debug("Applying layout repair for multi-column document")
-        md_text = repair_layout_breaks(md_text)
-
-    # CONDITIONAL: Internal reference cleanup if legal density exceeds threshold
-    if profile.legal_density > LEGAL_DENSITY_THRESHOLD:
-        logger.debug("Applying internal reference cleanup (high legal density)")
-        md_text = _remove_internal_references_scored(md_text)
-
-    # ALWAYS: Basic paragraph reconstruction
+    md_text = repair_layout_breaks(md_text)
+    md_text = _remove_internal_references_scored(md_text)
+    md_text = _remove_figure_legend_clusters(md_text)
     md_text = _reconstruct_paragraphs(md_text)
+    md_text = _remove_footnote_numbers(md_text)
+    md_text = _remove_repeated_blocks(md_text)
 
-    # CONDITIONAL: Aggressive footnote cleanup if density is high
-    if profile.footnote_density > FOOTNOTE_DENSITY_THRESHOLD:
-        logger.debug("Applying aggressive footnote cleanup")
-        md_text = _remove_footnote_numbers(md_text)
-
-    # CONDITIONAL: Repeated block removal if headers/footers detected
-    if profile.repeated_headers or profile.repeated_footers:
-        logger.debug("Applying repeated block removal")
-        md_text = _remove_repeated_blocks(md_text)
-
-    # CONDITIONAL: Image filtering if path provided
     if md_path is not None:
         md_text = _filter_images(md_text, md_path)
 
-    # ALWAYS: Final markdown normalization
     md_text = _clean_markdown(md_text)
 
     return md_text
@@ -583,19 +540,34 @@ def is_legal_internal_reference(line: str) -> bool:
 
 
 def _score_internal_reference(line: str) -> int:
-    """Calculate internal reference score for a line."""
-    score = 0
-    line_lower = line.lower().strip()
+    """Calculate internal reference score for a line.
 
-    # High confidence signals (+3)
+    Lines scoring >= ``INTERNAL_REF_SCORE_THRESHOLD`` (3) are removed.
+    """
+    score = 0
+    stripped = line.strip()
+    line_lower = stripped.lower()
+
+    # === High confidence signals (+3) ===
     if re.search(r"(?i)^\s*\d{0,2}\s*ver\s+p[aá]gs?\.?\s*\d", line):
         score += 3
     if re.search(r"(?i)^\s*\d{0,2}\s*ver\s+pdf\b", line):
         score += 3
     if re.search(r"(?i)\bver\s+pdf\s*:?\s*\d+\b", line):
         score += 3
+    if re.search(r"(?i)\bver\s+folio\b", line):
+        score += 3
 
-    # Medium confidence signals (+2)
+    # Numbered footnote body lines: "N  <text>" where N is 1-2 digits and
+    # the text starts with a capital letter or a known footnote starter.
+    # This is the dominant footnote format in Colombian tribunal documents.
+    if re.match(r"^\s*\d{1,2}\s{2,}[A-ZÁÉÍÓÚÜÑ]", stripped):
+        score += 3
+    if re.match(r"^\s*\d{1,2}\s{2,}[a-záéíóúüñ]", stripped):
+        # Lowercase start after wide gap — also a footnote body
+        score += 3
+
+    # === Medium confidence signals (+2) ===
     if re.search(r"(?i)^\s*folio[s]?\s+\d+", line):
         score += 2
     if re.search(r"(?i)^\s*cuaderno\s+\d+", line):
@@ -608,22 +580,51 @@ def _score_internal_reference(line: str) -> int:
         score += 2
     if re.search(r"(?i)onedrive|sharepoint|drive\.google", line):
         score += 2
-
-    # Lower confidence signals (+1)
-    if re.search(r"(?i)^\s*p[aá]g\.?\s*\d+\s*$", line):  # Bare page reference
-        score += 1
+    # "En adelante X" — abbreviation footnote
     if re.search(r"(?i)^\s*\d{1,2}\s+en adelante\b", line):
-        score += 1
+        score += 3
+    # "Al respecto ver..." — cross-reference footnote
     if re.search(r"(?i)^\s*\d{1,2}\s+al respecto\b", line):
-        score += 1
+        score += 3
+    # "M.P. Nombre" — magistrado ponente footnote
     if re.search(r"(?i)^\s*\d{1,2}\s+m\.p\.\b", line):
+        score += 3
+    # Corte Constitucional / Consejo de Estado / Sección footnotes
+    if re.search(
+        r"(?i)^\s*\d{1,2}\s+(corte constitucional|consejo de estado"
+        r"|sección primera|sala plena|sala de lo contencioso)\b", line
+    ):
+        score += 3
+    # "En cumplimiento de la Ley..." — long meta-footnote
+    if re.search(r"(?i)^\s*\d{1,2}\s+en cumplimiento\b", line):
+        score += 3
+    # "Vale la pena anotar que..." footnote
+    if re.search(r"(?i)^\s*\d{1,2}\s+vale la pena\b", line):
+        score += 3
+    # "Presentación de la demanda..." procedural timeline footnote
+    if re.search(r"(?i)^\s*\d{1,2}\s+presentación de la demanda\b", line):
+        score += 3
+    # "T-519 de 1992" / "SU-540 de 2007" — jurisprudence reference
+    if re.search(r"(?i)^\s*\d{1,2}\s+[A-Za-z]{1,3}-\d{3,}\b", line):
+        score += 3
+    # "Por el cual se..." — decree/resolution description footnote
+    if re.search(r"(?i)^\s*\d{1,2}\s+por (el|la|lo) cual\b", line):
+        score += 3
+
+    # === Lower confidence signals (+1) ===
+    if re.search(r"(?i)^\s*p[aá]g\.?\s*\d+\s*$", line):
         score += 1
     if re.search(r"(?i)^\s*ver\s+considerando\b", line):
         score += 1
+    # PDF page references within a line (not just at start)
+    if re.search(r"(?i)\bpdf\s+\d{2}\s+del\s+expediente\b", line):
+        score += 2
+    if re.search(r"(?i)\bexpediente\s+electrónico\s+judicial\b", line):
+        score += 2
 
-    # Line characteristics that boost score
+    # === Boost for short lines that already have a signal ===
     if len(line_lower) < 80 and score > 0:
-        score += 1  # Short lines with signals are more likely references
+        score += 1
 
     return score
 
@@ -897,6 +898,7 @@ def _calculate_coastal_relevance(paragraph: str) -> float:
 # Entity patterns for coastal legal terms
 _COASTAL_ENTITY_PATTERNS: dict[str, re.Pattern[str]] = {
     "playa": re.compile(r"(?i)\b(playa|playas)\b"),
+    "bahia": re.compile(r"(?i)\b(bahía|bahia|bahías|bahias)\b"),
     "bajamar": re.compile(r"(?i)\b(bajamar|zona de bajamar|terrenos de bajamar)\b"),
     "litoral": re.compile(r"(?i)\b(litoral|línea de costa|linea de costa|zona costera)\b"),
     "erosion": re.compile(r"(?i)\b(erosión|erosion|erosión costera|erosion costera)\b"),
@@ -928,6 +930,28 @@ _COASTAL_ENTITY_PATTERNS: dict[str, re.Pattern[str]] = {
     "estuario": re.compile(r"(?i)\b(estuario|estuarios|desembocadura)\b"),
     "restinga": re.compile(r"(?i)\b(restinga|restingas)\b"),
     "acantilado": re.compile(r"(?i)\b(acantilado|acantilados|risco|riscos)\b"),
+    "vertimiento": re.compile(
+        r"(?i)\b(vertimiento|vertimientos|aguas residuales|aguas servidas)\b"
+    ),
+    "emisario": re.compile(r"(?i)\b(emisario submarino|emisario|emisarios)\b"),
+    "arrecife": re.compile(
+        r"(?i)\b(arrecife|arrecifes|formación arrecifal|formacion arrecifal|coral|corales)\b"
+    ),
+    "colector_pluvial": re.compile(
+        r"(?i)\b(colector pluvial|colector|colectores|sistema de drenaje pluvial)\b"
+    ),
+    "contaminacion_marina": re.compile(
+        r"(?i)\b(contaminación marina|contaminacion marina"
+        r"|contaminación del mar|contaminacion del mar|contaminación costera)\b"
+    ),
+    "pradera_marina": re.compile(
+        r"(?i)\b(pradera marina|praderas marinas|pastos marinos|algas marinas)\b"
+    ),
+    "capitania": re.compile(r"(?i)\b(capitanía de puerto|capitania de puerto|capitanía)\b"),
+    "corpamag": re.compile(
+        r"(?i)\b(corpamag|corporación autónoma regional del magdalena"
+        r"|corporacion autonoma regional del magdalena)\b"
+    ),
 }
 
 
@@ -992,11 +1016,16 @@ def evaluate_document_quality(
     # Heading score: measure heading consistency
     heading_score = profile.heading_consistency * 100
 
-    # OCR cleanup score: inverse of remaining noise
-    ocr_score = max(0, 100 - (profile.ocr_noise_score * 100 / OCR_NOISE_THRESHOLD))
+    # OCR cleanup score: high noise → low score, capped so it never hits 0
+    # for documents with moderate noise.
+    if profile.ocr_noise_score <= OCR_NOISE_THRESHOLD:
+        ocr_score = 100.0
+    else:
+        ocr_score = max(20.0, 100.0 - ((profile.ocr_noise_score - OCR_NOISE_THRESHOLD) * 200))
 
-    # Footer removal score: based on detected furniture removal
-    footer_score = 100.0 if not profile.repeated_headers and not profile.repeated_footers else 70.0
+    # Footer removal: all documents get cleaned now, so score based on
+    # whether the cleaned text still contains suspected furniture.
+    footer_score = _score_footer_removal(cleaned_md)
 
     # Citation cleanup score: based on remaining internal references
     citation_score = _score_citation_cleanup(cleaned_md)
@@ -1038,40 +1067,79 @@ def evaluate_document_quality(
 
 
 def _score_paragraph_reconstruction(original: str, cleaned: str) -> float:
-    """Score paragraph reconstruction quality."""
+    """Score paragraph reconstruction quality.
+
+    Checks both consolidation ratio AND the presence of broken paragraphs
+    (lines ending without terminator followed by lowercase continuation).
+    """
     orig_paras = len([p for p in original.split("\n\n") if p.strip()])
-    clean_paras = len([p for p in cleaned.split("\n\n") if p.strip()])
+    clean_paras = [p for p in cleaned.split("\n\n") if p.strip()]
 
     if orig_paras == 0:
         return 50.0
 
-    # Good reconstruction reduces fragmentation
-    ratio = clean_paras / orig_paras
-
-    if 0.5 <= ratio <= 0.9:
-        return 100.0  # Good consolidation
-    elif 0.3 <= ratio < 0.5:
-        return 80.0  # Aggressive but possibly good
-    elif 0.9 < ratio <= 1.0:
-        return 70.0  # Minimal change
+    # Consolidation component (0-50 points)
+    ratio = len(clean_paras) / orig_paras
+    if 0.4 <= ratio <= 0.85:
+        consolidation = 50.0
+    elif 0.85 < ratio <= 1.0:
+        consolidation = 35.0
     else:
-        return 50.0  # Unusual ratio
+        consolidation = 20.0
+
+    # Broken-paragraph component (0-50 points): penalize remaining breaks
+    broken = 0
+    for i in range(len(clean_paras) - 1):
+        cur = clean_paras[i].strip()
+        nxt = clean_paras[i + 1].strip()
+        if (
+            cur
+            and nxt
+            and cur[-1] not in ".;:?!\"')"
+            and nxt[0].islower()
+            and not nxt.startswith(("#", "-", "*"))
+        ):
+            broken += 1
+
+    break_ratio = broken / max(1, len(clean_paras))
+    integrity = max(0.0, 50.0 - break_ratio * 200)
+
+    return min(100.0, consolidation + integrity)
+
+
+def _score_footer_removal(cleaned_md: str) -> float:
+    """Score footer/header removal effectiveness on the cleaned text."""
+    lines = [l.strip() for l in cleaned_md.splitlines() if l.strip()]
+    if not lines:
+        return 50.0
+
+    # Count lines that look like remaining footnote bodies
+    footnote_body_re = re.compile(r"^\d{1,2}\s{2,}")
+    remaining = sum(1 for l in lines if footnote_body_re.match(l))
+    ratio = remaining / len(lines)
+    return max(0.0, min(100.0, 100 - ratio * 1000))
 
 
 def _score_citation_cleanup(cleaned_md: str) -> float:
-    """Score internal reference cleanup effectiveness."""
+    """Score internal reference cleanup effectiveness.
+
+    Counts remaining lines that match footnote body or page-reference
+    patterns and penalizes proportionally.
+    """
     lines = cleaned_md.splitlines()
-
-    # Count remaining internal references
-    remaining_refs = sum(1 for line in lines if is_legal_internal_reference(line))
-
-    if len(lines) == 0:
+    if not lines:
         return 50.0
 
-    ref_ratio = remaining_refs / len(lines)
+    # Use both the scored classifier AND simpler heuristic patterns
+    remaining_refs = sum(1 for line in lines if is_legal_internal_reference(line))
 
-    # Score inversely proportional to remaining references
-    return max(0, 100 - (ref_ratio * 500))
+    # Also count "N  En adelante" / "N  Ver" / "N  Corte" patterns that
+    # might score below threshold individually
+    simple_fn = re.compile(r"^\s*\d{1,2}\s{2,}(En|Ver|Al|Corte|Consejo|Por|M\.P)", re.IGNORECASE)
+    remaining_refs += sum(1 for line in lines if simple_fn.match(line.strip()))
+
+    ref_ratio = remaining_refs / len(lines)
+    return max(0.0, min(100.0, 100 - ref_ratio * 800))
 
 
 def _score_segmentation(blocks: list[LegalBlock]) -> float:
@@ -1127,6 +1195,90 @@ def _score_entity_extraction(
 # ======================================================================
 # ORIGINAL UTILITY FUNCTIONS (PRESERVED/UPDATED)
 # ======================================================================
+
+
+def _strip_frontmatter_noise(text: str) -> str:
+    """Remove OCR noise lines that precede the first real heading.
+
+    The first pages of Colombian tribunal PDFs often contain institutional
+    banners, seals, phone numbers, social-media handles and decorative text
+    that Docling extracts verbatim.  Everything before the first ``## ``
+    heading that does NOT look like meaningful legal prose is discarded.
+    """
+    lines = text.splitlines()
+    first_heading_idx = None
+    for idx, line in enumerate(lines):
+        if line.strip().startswith("## "):
+            first_heading_idx = idx
+            break
+
+    if first_heading_idx is None or first_heading_idx < 2:
+        return text
+
+    # Keep only preamble lines that look like real prose (>60 chars, mostly
+    # alphabetic, not all-caps noise, and not phone numbers / handles).
+    _junk_re = re.compile(
+        r"^("
+        r"\d{7,}"                        # phone numbers
+        r"|[A-Z@#·\s\-\.\d]{3,50}$"     # ALL-CAPS noise / handles
+        r"|.{0,5}$"                       # very short fragments
+        r"|.*[@#].*"                       # social media handles
+        r")",
+        re.MULTILINE,
+    )
+    kept_preamble: list[str] = []
+    for line in lines[:first_heading_idx]:
+        stripped = line.strip()
+        if not stripped:
+            kept_preamble.append(line)
+            continue
+        if _junk_re.match(stripped):
+            continue
+        # Lines with very low alphabetic density are noise
+        alpha = sum(1 for c in stripped if c.isalpha())
+        if len(stripped) > 0 and alpha / len(stripped) < 0.5:
+            continue
+        kept_preamble.append(line)
+
+    return "\n".join(kept_preamble + lines[first_heading_idx:])
+
+
+def _remove_figure_legend_clusters(text: str) -> str:
+    """Remove clusters of short lines that are map/figure legend artifacts.
+
+    When Docling extracts text from embedded maps or diagrams it produces
+    runs of 3+ consecutive short lines (< 35 chars each) with no verbs or
+    connectors — just place names, units, legend labels.  These pollute
+    the legal text with noise.
+    """
+    _CONNECTOR_RE = re.compile(
+        r"(?i)\b(que|para|por|con|sin|como|según|entre|sobre|bajo"
+        r"|durante|mediante|desde|hasta|siendo|puede|debe|tiene"
+        r"|está|fue|han|será|son|del|los|las|una|uno|este|esta)\b"
+    )
+    paragraphs = text.split("\n\n")
+    result: list[str] = []
+
+    for para in paragraphs:
+        lines = [l.strip() for l in para.splitlines() if l.strip()]
+        if len(lines) < 3:
+            result.append(para)
+            continue
+
+        short_count = sum(1 for l in lines if len(l) < 35)
+        if short_count < 3 or short_count / len(lines) < 0.6:
+            result.append(para)
+            continue
+
+        joined = " ".join(lines)
+        if _CONNECTOR_RE.search(joined):
+            result.append(para)
+            continue
+
+        # Cluster of short lines with no linguistic connectors → discard
+        continue
+
+    return "\n\n".join(result)
 
 
 def _fix_ocr_chars(text: str) -> str:
@@ -1211,18 +1363,30 @@ def _reconstruct_paragraphs(text: str) -> str:
 
 
 def _remove_footnote_numbers(text: str) -> str:
-    """Remove footnote numbers attached to words."""
+    """Remove footnote markers from the text.
+
+    Handles three patterns:
+
+    1. **Glued**: ``jurisdicción14`` — word immediately followed by 1-2 digits.
+    2. **Spaced**: ``contestó 6`` / ``demanda 14`` — word + whitespace + 1-2
+       digits standing alone (Docling often inserts spaces around superscripts).
+    3. **Year+digit**: ``20228`` — 4-digit year with a trailing footnote digit.
+
+    Legal context protection prevents stripping digits that follow citation
+    keywords (ley, artículo, decreto, etc.) within 40 chars to the left.
+    """
     _CITATION_WORD = re.compile(
         r"(?i)^(ley|artículo|articulo|decreto|numeral|inciso|parágrafo"
         r"|paragrafo|literal|ordinal|resolución|resolucion)$"
     )
 
-    word_digit = re.compile(
+    # Pass 1: glued — "DIMAR2", "jurisdicción14"
+    word_digit_glued = re.compile(
         r"([A-Za-záéíóúüñÁÉÍÓÚÜÑ]{2,})(\d{1,2})\b(?!\d)",
         re.UNICODE,
     )
 
-    def _replace_word(m: re.Match[str]) -> str:
+    def _replace_glued(m: re.Match[str]) -> str:
         word_part = m.group(1)
         preceding = text[max(0, m.start() - 40) : m.start()]
         if _FOOTNOTE_LEGAL_CONTEXT.search(preceding):
@@ -1231,8 +1395,36 @@ def _remove_footnote_numbers(text: str) -> str:
             return m.group(0)
         return word_part
 
-    text = word_digit.sub(_replace_word, text)
+    text = word_digit_glued.sub(_replace_glued, text)
 
+    # Pass 2: spaced — "contestó 6", "demanda  14  manifestando"
+    #   word + 1+ spaces + 1-2 digit number + word-boundary (not more digits)
+    #   Only match when the digit is NOT preceded by a legal keyword.
+    word_space_digit = re.compile(
+        r"([A-Za-záéíóúüñÁÉÍÓÚÜÑ]{2,})"   # word of >= 2 letters
+        r"(\s+)"                              # one or more spaces
+        r"(\d{1,2})"                          # 1-2 digit footnote marker
+        r"(?=\s|[.,;:!?\)\]\"\']|$)"         # followed by space/punct/end
+    )
+
+    def _replace_spaced(m: re.Match[str]) -> str:
+        word_part = m.group(1)
+        digit = m.group(3)
+        preceding = text[max(0, m.start() - 40) : m.start()]
+        if _FOOTNOTE_LEGAL_CONTEXT.search(preceding):
+            return m.group(0)
+        if _CITATION_WORD.match(word_part):
+            return m.group(0)
+        # Protect numbered list items ("artículo 128") where digit > 2 chars
+        # is already excluded by the \d{1,2} limit, but also protect when
+        # the word looks like a legal citation target
+        if int(digit) > 55:
+            return m.group(0)
+        return word_part
+
+    text = word_space_digit.sub(_replace_spaced, text)
+
+    # Pass 3: year + trailing footnote digit — "20228" → "2022"
     year_digit = re.compile(r"\b((?:1[89]\d\d|20\d\d))(\d)\b(?!\d)")
     text = year_digit.sub(r"\1", text)
 
@@ -1390,8 +1582,13 @@ def convert_pdfs_to_markdown() -> list[Path]:
             # Step 1: Docling conversion
             conv_result = converter.convert(pdf_path)
 
-            # Step 2: Initial markdown extraction
-            md_path = BRONZE_DIR / f"{pdf_path.stem}.md"
+            # Step 2: Initial markdown extraction.
+            # Docling creates an ``{stem}_artifacts/`` directory for images
+            # next to the ``.md`` file.  We use the PDF stem directly so
+            # that the artifacts directory is ``{stem}_artifacts/`` and the
+            # final markdown keeps working image references.
+            doc_stem = pdf_path.stem
+            md_path = BRONZE_DIR / f"{doc_stem}.md"
             conv_result.document.save_as_markdown(
                 md_path,
                 image_mode=ImageRefMode.REFERENCED,
@@ -1419,15 +1616,13 @@ def convert_pdfs_to_markdown() -> list[Path]:
             # Step 8: Write outputs
             md_path.write_text(cleaned_md, encoding="utf-8")
 
-            # Write quality report JSON
-            quality_path = BRONZE_DIR / f"{pdf_path.stem}.quality.json"
+            quality_path = BRONZE_DIR / f"{doc_stem}.quality.json"
             quality_path.write_text(
                 json.dumps(asdict(quality), indent=2, ensure_ascii=False), encoding="utf-8"
             )
 
-            # Write entities JSON if any found
             if entities:
-                entities_path = BRONZE_DIR / f"{pdf_path.stem}.entities.json"
+                entities_path = BRONZE_DIR / f"{doc_stem}.entities.json"
                 entities_path.write_text(
                     json.dumps(entities, indent=2, ensure_ascii=False), encoding="utf-8"
                 )
@@ -1480,7 +1675,8 @@ def process_single_pdf(
     try:
         conv_result = converter.convert(pdf_path)
 
-        md_path = output_dir / f"{pdf_path.stem}.md"
+        doc_stem = pdf_path.stem
+        md_path = output_dir / f"{doc_stem}.md"
         conv_result.document.save_as_markdown(
             md_path,
             image_mode=ImageRefMode.REFERENCED,
@@ -1498,13 +1694,13 @@ def process_single_pdf(
 
         md_path.write_text(cleaned_md, encoding="utf-8")
 
-        quality_path = output_dir / f"{pdf_path.stem}.quality.json"
+        quality_path = output_dir / f"{doc_stem}.quality.json"
         quality_path.write_text(
             json.dumps(asdict(quality), indent=2, ensure_ascii=False), encoding="utf-8"
         )
 
         if entities:
-            entities_path = output_dir / f"{pdf_path.stem}.entities.json"
+            entities_path = output_dir / f"{doc_stem}.entities.json"
             entities_path.write_text(
                 json.dumps(entities, indent=2, ensure_ascii=False), encoding="utf-8"
             )
