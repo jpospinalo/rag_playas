@@ -401,6 +401,7 @@ def adaptive_cleanup(
     md_text = _remove_noisy_lines(md_text)
     md_text = repair_layout_breaks(md_text)
     md_text = _remove_internal_references_scored(md_text)
+    md_text = _remove_footnote_citation_blocks(md_text)
     md_text = _remove_figure_legend_clusters(md_text)
     md_text = _reconstruct_paragraphs(md_text)
     md_text = _remove_footnote_numbers(md_text)
@@ -658,6 +659,81 @@ def _remove_internal_references_scored(text: str) -> str:
     lines = text.splitlines()
     cleaned = [line for line in lines if not is_legal_internal_reference(line)]
     return "\n".join(cleaned)
+
+
+# ------------------------------------------------------------------
+# 4b. FOOTNOTE CITATION BLOCK REMOVAL
+# ------------------------------------------------------------------
+
+_CITATION_ANCHOR_RE = re.compile(
+    r"(?i)Radicaci[oó]n:\s*\d{2,}|"
+    r"Referencia:\s*medio\s+de\s+control|"
+    r"[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]+\s+[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]+\s+[A-ZÁÉÍÓÚÜÑ]"
+    r"[a-záéíóúüñ]+\.\s+Bogot[aá]"
+)
+
+_CITATION_FRAGMENT_RE = re.compile(
+    r"(?i)^("
+    r"\d{5}-\d+\.\s*Demandante:|"           # "00987-01.  Demandante:"
+    r"General\s+de\b|"                       # "General de"
+    r"Delegad[oa]\s+para\b|"                 # "Delegada para"
+    r"la\s+Naci[oó]n$|"                      # "la Nación"
+    r"Procuradur[ií]a$|"                     # "Procuraduría"
+    r"Nacional\s+de\s+Licencias\b|"          # "Nacional de Licencias"
+    r"-$|"                                   # bare dash
+    r"Ambientales\s+y\s+Agrarios|"
+    r"Asuntos$|"
+    r"Naci[oó]n\s*-\s*Ministerio\b|"        # "Nación - Ministerio..."
+    r".*-\s*ANLA\b|"                         # "...ANLA - otros"
+    r".*-\s*otros\.\s*$"                     # "...Autoridad - otros."
+    r")"
+)
+
+
+def _remove_footnote_citation_blocks(text: str) -> str:
+    """Remove multi-paragraph footnote citation blocks from cited decisions.
+
+    These blocks contain the cited decision's metadata (Radicación, parties,
+    judge name) spread across many short fragmented lines produced by
+    multi-column OCR.  They are identified by an anchor line containing a
+    recognizable citation pattern, followed by short fragment lines.
+    """
+    paragraphs = text.split("\n\n")
+    to_remove: set[int] = set()
+
+    for idx, para in enumerate(paragraphs):
+        stripped = para.strip()
+        if not stripped:
+            continue
+
+        if not _CITATION_ANCHOR_RE.search(stripped):
+            continue
+
+        if stripped.startswith("#") or stripped.startswith("|"):
+            continue
+
+        # Found an anchor.  Mark it and scan forward for fragment lines.
+        to_remove.add(idx)
+        for j in range(idx + 1, min(idx + 20, len(paragraphs))):
+            frag = paragraphs[j].strip()
+            if not frag:
+                continue
+            if frag.startswith("#") or frag.startswith("|"):
+                break
+            if re.match(r"^\d{1,3}\.\s", frag):
+                break
+            if _CITATION_FRAGMENT_RE.match(frag):
+                to_remove.add(j)
+            elif len(frag) < 70 and not re.match(r"^\d{1,3}\.\s", frag):
+                to_remove.add(j)
+            else:
+                break
+
+    if not to_remove:
+        return text
+
+    cleaned = [p for i, p in enumerate(paragraphs) if i not in to_remove]
+    return "\n\n".join(cleaned)
 
 
 # ======================================================================
@@ -1652,6 +1728,22 @@ def _filter_images(
     return md_text
 
 
+_HEADING_BODY_RE = re.compile(
+    r"^(#{1,6}\s+"                      # markdown heading prefix
+    r"(?:"
+    r"[IVXivx]+\."                      # Roman numeral section "II."
+    r"|"
+    r"\d+(?:\.\d+)*\.?"                 # Decimal section "1.1." / "2.3.1"
+    r")?"
+    r"\s*"
+    r"[A-ZÁÉÍÓÚÜÑ][^.]*?"              # Title text (up to first period)
+    r"\.)"                              # Closing period of the title
+    r"\s+"                              # Whitespace gap
+    r"([A-ZÁÉÍÓÚÜÑ]"                    # Body starts with uppercase
+    r"[A-Za-záéíóúüñÁÉÍÓÚÜÑ\s,()]{10,})"  # at least 10 chars of prose
+)
+
+
 def _split_heading_body(text: str) -> str:
     r"""Separate heading titles from body text that Docling fused onto the
     same ``## `` line.
@@ -1664,32 +1756,51 @@ def _split_heading_body(text: str) -> str:
 
     This function detects the pattern and inserts a paragraph break after
     the heading title so downstream consumers see a clean heading.
-    """
-    heading_re = re.compile(
-        r"^(#{1,6}\s+"                      # markdown heading prefix
-        r"(?:"
-        r"[IVXivx]+\."                      # Roman numeral section "II."
-        r"|"
-        r"\d+(?:\.\d+)*\.?"                 # Decimal section "1.1." / "2.3.1"
-        r")?"
-        r"\s*"
-        r"[A-ZÁÉÍÓÚÜÑ][^.]*?"              # Title text (up to first period)
-        r"\.)"                              # Closing period of the title
-        r"\s+"                              # Whitespace gap
-        r"([A-ZÁÉÍÓÚÜÑ]"                    # Body starts with uppercase
-        r"[A-Za-záéíóúüñÁÉÍÓÚÜÑ\s,()]{10,})"  # at least 10 chars of prose
-    )
 
+    It also re-infers the first paragraph number that Docling absorbed into
+    the heading.  For example, if ``2. Afirmó...`` follows the split body,
+    the body is prepended with ``1.`` so the numbering sequence is complete.
+    """
     lines = text.splitlines()
     result: list[str] = []
-    for line in lines:
-        m = heading_re.match(line)
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = _HEADING_BODY_RE.match(line)
         if m:
             result.append(m.group(1))
-            result.append(m.group(2) + line[m.end():])
+            body = m.group(2) + line[m.end():]
+            body = _maybe_prepend_number(body, lines, i + 1)
+            result.append(body)
         else:
             result.append(line)
+        i += 1
     return "\n".join(result)
+
+
+def _maybe_prepend_number(body: str, lines: list[str], start_idx: int) -> str:
+    """If the paragraphs following a split heading start at number N+1
+    (e.g. ``2. Afirmó...``), prepend ``N.`` to *body* so the list is
+    complete.  Docling absorbs the first list number into the heading's
+    section number (``1.1.``), leaving the body without its ordinal.
+    """
+    next_num = _find_next_paragraph_number(lines, start_idx)
+    if next_num is not None and next_num >= 2:
+        expected = next_num - 1
+        if not re.match(r"^\d+\.\s", body):
+            body = f"{expected}. {body}"
+    return body
+
+
+def _find_next_paragraph_number(lines: list[str], start_idx: int) -> int | None:
+    """Scan forward from *start_idx* for the first line that starts with a
+    legal paragraph number (``N. ``).  Returns the number or ``None``.
+    """
+    for j in range(start_idx, min(start_idx + 15, len(lines))):
+        m = re.match(r"^(\d{1,3})\.\s", lines[j])
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def _clean_markdown(text: str) -> str:
