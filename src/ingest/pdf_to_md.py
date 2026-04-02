@@ -1321,6 +1321,7 @@ _INSTITUTIONAL_NOISE_RE = re.compile(
     r"|[A-Za-z]*@\S+$"                  # social media handle
     r"|[XxYy][\s@]?\S{0,30}$"          # platform handle "X@...", "YeuTube"
     r"|(?:YouTube|YeuTube|Facebook|Instagram|Twitter)\b.*$"
+    r"|[a-z]\d{2}[a-z]\w{0,30}$"       # institutional handle "d01tribunalmag"
     r")",
     re.IGNORECASE,
 )
@@ -1651,8 +1652,49 @@ def _filter_images(
     return md_text
 
 
+def _split_heading_body(text: str) -> str:
+    r"""Separate heading titles from body text that Docling fused onto the
+    same ``## `` line.
+
+    Colombian tribunal documents use section numbers like ``1.1.``,
+    ``2.3.1.`` followed by a title, then the first body sentence.  Docling
+    often joins them:
+
+        ## 1.1. Posición de la parte demandante. En síntesis, ...
+
+    This function detects the pattern and inserts a paragraph break after
+    the heading title so downstream consumers see a clean heading.
+    """
+    heading_re = re.compile(
+        r"^(#{1,6}\s+"                      # markdown heading prefix
+        r"(?:"
+        r"[IVXivx]+\."                      # Roman numeral section "II."
+        r"|"
+        r"\d+(?:\.\d+)*\.?"                 # Decimal section "1.1." / "2.3.1"
+        r")?"
+        r"\s*"
+        r"[A-ZÁÉÍÓÚÜÑ][^.]*?"              # Title text (up to first period)
+        r"\.)"                              # Closing period of the title
+        r"\s+"                              # Whitespace gap
+        r"([A-ZÁÉÍÓÚÜÑ]"                    # Body starts with uppercase
+        r"[A-Za-záéíóúüñÁÉÍÓÚÜÑ\s,()]{10,})"  # at least 10 chars of prose
+    )
+
+    lines = text.splitlines()
+    result: list[str] = []
+    for line in lines:
+        m = heading_re.match(line)
+        if m:
+            result.append(m.group(1))
+            result.append(m.group(2) + line[m.end():])
+        else:
+            result.append(line)
+    return "\n".join(result)
+
+
 def _clean_markdown(text: str) -> str:
     """Final structural cleanup of markdown."""
+    text = _split_heading_body(text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"([^\n])\n(#{1,6}\s)", r"\1\n\n\2", text)
     text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
