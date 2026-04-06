@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from langchain_core.documents import Document
 
 from .normalize import normalize_documents
+from .sections import split_by_sections
 from .utils import save_docs_jsonl_per_file
 
 load_dotenv()
@@ -54,10 +55,27 @@ def load_documents() -> list[Document]:
     docs = normalize_documents(raw_docs)
     print(f"Documentos normalizados: {len(docs)}")
 
-    save_docs_jsonl_per_file(docs, SILVER_DIR)
-    print(f"Documentos guardados en: {SILVER_DIR}")
+    sectioned_docs: list[Document] = []
+    for doc in docs:
+        sections = split_by_sections(doc)
+        title = doc.metadata.get("title") or doc.metadata.get("source", "?")
+        print(f"\n  [{title}]")
+        for s in sections:
+            m = s.metadata
+            heading = m.get("section_heading") or "(sin heading)"
+            found = bool(s.page_content)
+            status = f"{len(s.page_content):>6} chars" if found else "  vacío      "
+            marker = "✓" if found else "✗"
+            print(f"    {marker} Sección {m['section_index']} – {m['section_name']:<30} {heading!r:<45} {status}")
+        sectioned_docs.extend(sections)
 
-    return docs
+    detected = sum(1 for d in sectioned_docs if d.page_content)
+    print(f"\nSecciones detectadas: {detected}/{len(sectioned_docs)} con contenido ({len(docs)} documentos)")
+
+    save_docs_jsonl_per_file(sectioned_docs, SILVER_DIR)
+    print(f"Guardado en: {SILVER_DIR}\n")
+
+    return sectioned_docs
 
 
 def main() -> None:
@@ -66,11 +84,7 @@ def main() -> None:
         print("No hay documentos.")
         return
 
-    print(f"Total documentos: {len(documents)}")
-
-    ejemplo_idx = 1 if len(documents) > 1 else 0
-    print("Ejemplo metadata:", documents[ejemplo_idx].metadata)
-    print("Ejemplo texto (primeros 500 chars):\n", documents[ejemplo_idx].page_content[:500])
+    print(f"Total secciones: {len(documents)}")
 
 
 if __name__ == "__main__":
