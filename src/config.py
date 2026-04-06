@@ -18,7 +18,6 @@ DATA_DIR = BASE_DIR / "data"
 RAW_DIR = DATA_DIR / "raw"
 BRONZE_DIR = DATA_DIR / "bronze"
 SILVER_DIR = DATA_DIR / "silver"
-CHUNKED_DIR = SILVER_DIR / "chunked"
 GOLD_DIR = DATA_DIR / "gold"
 
 # ── Chroma ─────────────────────────────────────────────────────────────────
@@ -33,7 +32,7 @@ OLLAMA_RERANKER_MODEL: str = os.getenv("OLLAMA_RERANKER_MODEL", "mistral")
 
 # ── Gemini ─────────────────────────────────────────────────────────────────
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-GEMINI_ENRICHER_MODEL: str = os.getenv("GEMINI_ENRICHER_MODEL", "gemini-2.0-flash")
+GEMINI_ENRICHER_MODEL: str = os.getenv("GEMINI_ENRICHER_MODEL", GEMINI_MODEL)
 
 # ── Retriever ──────────────────────────────────────────────────────────────
 DEFAULT_K: int = int(os.getenv("DEFAULT_K", "4"))
