@@ -139,12 +139,20 @@ def respond(
 
 
 def build_app() -> gr.Blocks:
-    with gr.Blocks() as demo:
+    with gr.Blocks(title="RAG Jurisprudencia — Derecho de Playas") as demo:
         gr.Markdown(
             """
-# The Poe-RAG
+# RAG de Jurisprudencia — Derecho de Playas
 
-Interactúa con un sistema RAG basado en cuentos de Edgar Allan Poe.
+Sistema de consulta basado en recuperación semántica (**RAG**) sobre un corpus de
+**jurisprudencia española en materia de playas**: sentencias del Tribunal Supremo,
+Audiencias Nacionales y Tribunales Superiores de Justicia que abordan el deslinde
+del dominio público marítimo-terrestre, servidumbres de tránsito y protección,
+concesiones y autorizaciones en zona costera, responsabilidad patrimonial de la
+Administración por actuaciones en litoral, y acceso público a la playa.
+
+> Escribe tu pregunta en lenguaje natural. El sistema recupera los fragmentos de
+> resoluciones judiciales más relevantes y genera una respuesta fundamentada en ellos.
 """
         )
 
@@ -152,14 +160,17 @@ Interactúa con un sistema RAG basado en cuentos de Edgar Allan Poe.
             # Columna izquierda: chat + controles
             with gr.Column(scale=1):
                 chatbot = gr.Chatbot(
-                    label="Poe-RAG",
+                    label="Asistente de jurisprudencia — Playas",
                     height=380,
                     value=[],
                 )
 
                 question = gr.Textbox(
-                    label="Escribe tu pregunta",
-                    placeholder='Por ejemplo: ¿qué le pasó a Leonora en "El cuervo"?',
+                    label="Consulta jurídica",
+                    placeholder=(
+                        "Por ejemplo: ¿Cuál es el criterio del Tribunal Supremo "
+                        "sobre el deslinde del dominio público marítimo-terrestre?"
+                    ),
                     lines=2,
                 )
 
@@ -170,7 +181,7 @@ Interactúa con un sistema RAG basado en cuentos de Edgar Allan Poe.
                         maximum=8,
                         value=4,
                         step=1,
-                        label="Número de chunks para el contexto (k)",
+                        label="Número de fragmentos para el contexto (k)",
                     )
 
                     k_candidates_slider = gr.Slider(
@@ -178,25 +189,25 @@ Interactúa con un sistema RAG basado en cuentos de Edgar Allan Poe.
                         maximum=16,
                         value=8,
                         step=1,
-                        label="Número de candidatos iniciales del retriever (k_candidates)",
+                        label="Candidatos iniciales del retriever (k_candidates)",
                     )
 
                     show_context_chk = gr.Checkbox(
                         value=True,
-                        label="Mostrar chunks de contexto usados en la columna derecha",
+                        label="Mostrar fragmentos recuperados en la columna derecha",
                     )
 
-                send_btn = gr.Button("Responder", variant="primary")
+                send_btn = gr.Button("Consultar", variant="primary")
 
             # Columna derecha: contexto
             with gr.Column(scale=1):
-                gr.Markdown("### Chunks recuperados del corpus")
+                gr.Markdown("### Fragmentos recuperados del corpus")
                 gr.Markdown(
-                    "Aquí se muestran los fragmentos de los cuentos que el sistema utiliza "
-                    "como contexto para responder."
+                    "Aquí se muestran los extractos de las resoluciones judiciales que el "
+                    "sistema ha utilizado como contexto para elaborar la respuesta."
                 )
                 context_md = gr.Markdown(
-                    "Todavía no se han recuperado chunks. Haz una pregunta para verlos."
+                    "Todavía no se han recuperado fragmentos. Formula una consulta para verlos."
                 )
 
         # Eventos
