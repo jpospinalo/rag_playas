@@ -3,18 +3,15 @@
 ```
 PDFs (data/raw/)
       │
-      ▼ pdf_to_md.py (Docling + OCR + imágenes)
+      ▼ pdf_to_md (Docling + OCR + imágenes)
 data/bronze/*.md             ← documentos en Markdown limpio con imágenes
-data/bronze/images/          ← imágenes extraídas (figuras, tablas)
+data/bronze/<doc>/assets/    ← imágenes extraídas (figuras, tablas)
       │
-      ▼ loaders.py (lectura MD + normalize)
-data/silver/*.jsonl          ← documentos normalizados por fuente
+      ▼ loaders.py (lectura MD + normalize + split_by_sections)
+data/silver/*.jsonl          ← secciones normalizadas (4 por documento)
       │
-      ▼ splitter.py (RecursiveCharacterTextSplitter)
-data/silver/chunked/*.jsonl  ← chunks con chunk_id y chunk_index
-      │
-      ▼ enrich.py (Gemini JSON-mode)
-data/gold/*.jsonl            ← chunks + summary + keywords + entities
+      ▼ splitter_and_enrich.py (chunking + Gemini JSON-mode)
+data/gold/*.jsonl            ← chunks con chunk_id, summary, keywords, entities
       │
       ▼ vectorstore.py (Ollama embeddings → ChromaDB)
 ChromaDB (HTTP)              ← colección indexada
