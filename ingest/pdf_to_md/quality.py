@@ -14,7 +14,6 @@ from .config import OCR_NOISE_THRESHOLD
 from .models import DocumentQualityReport, LegalBlock, LegalDocumentProfile
 from .references import is_legal_internal_reference
 
-
 # ---------------------------------------------------------------------------
 # Individual scoring functions
 # ---------------------------------------------------------------------------

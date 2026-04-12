@@ -14,16 +14,10 @@ import warnings
 from dataclasses import asdict
 from pathlib import Path
 
-warnings.filterwarnings("ignore", category=FutureWarning)
-
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import ImageRefMode
-
-logging.getLogger("docling").setLevel(logging.WARNING)
-logging.getLogger("rapidocr").setLevel(logging.WARNING)
-logging.getLogger("onnxruntime").setLevel(logging.WARNING)
 
 from .cleaner import adaptive_cleanup
 from .config import BRONZE_DIR, IMAGE_RESOLUTION_SCALE, RAW_DIR
@@ -32,6 +26,12 @@ from .models import DocumentQualityReport
 from .profiler import profile_legal_document
 from .quality import evaluate_document_quality
 from .segmenter import extract_coastal_legal_entities, segment_legal_sections
+
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+logging.getLogger("docling").setLevel(logging.WARNING)
+logging.getLogger("rapidocr").setLevel(logging.WARNING)
+logging.getLogger("onnxruntime").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 

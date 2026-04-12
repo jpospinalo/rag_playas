@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import re
 
-
 _DANGLING_TAIL_RE = re.compile(
     r"(?i)\b(y|e|o|u|que|de|del|la|el|los|las|en|con|por|para|su|sus"
     r"|una|un|al|como|sin|ni|sobre|bajo|ante|entre|desde|hasta"

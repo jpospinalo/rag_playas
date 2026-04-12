@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from .config import COASTAL_PATTERN, OCR_NOISE_THRESHOLD, REPEATED_FURNITURE_THRESHOLD
+from .config import COASTAL_PATTERN, OCR_NOISE_THRESHOLD
 from .models import LegalDocumentProfile
 
 _LEGAL_CITATION_PATTERNS: list[re.Pattern[str]] = [

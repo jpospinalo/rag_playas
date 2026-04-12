@@ -8,8 +8,13 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from .config import FOOTNOTE_LEGAL_CONTEXT, MD_STRUCTURE_RE, MIN_BLOCK_REPEATS, NOISE_CHAR_RATIO, OCR_CORRECTIONS
-
+from .config import (
+    FOOTNOTE_LEGAL_CONTEXT,
+    MD_STRUCTURE_RE,
+    MIN_BLOCK_REPEATS,
+    NOISE_CHAR_RATIO,
+    OCR_CORRECTIONS,
+)
 
 # ---------------------------------------------------------------------------
 # OCR character correction

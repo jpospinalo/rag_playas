@@ -9,8 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .furniture import detect_repeated_page_furniture, remove_page_furniture
-from .images import filter_images, relativize_image_refs
+from .images import filter_images
 from .layout import reconstruct_paragraphs, repair_layout_breaks
 from .models import LegalDocumentProfile
 from .references import remove_footnote_citation_blocks, remove_internal_references
