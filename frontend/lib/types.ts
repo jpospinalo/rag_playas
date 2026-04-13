@@ -24,3 +24,10 @@ export interface QueryResponse {
   answer: string;
   sources: SourceDocument[];
 }
+
+// ── SSE stream event types ─────────────────────────────────────────────────
+
+export type StreamEvent =
+  | { type: "token"; content: string }
+  | { type: "sources"; sources: SourceDocument[] }
+  | { type: "error"; detail: string };

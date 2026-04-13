@@ -1,9 +1,10 @@
-# src/backend/retriever.py
+# rag/core/retriever.py
 
 from __future__ import annotations
 
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import chromadb
@@ -17,7 +18,7 @@ from langchain_core.retrievers import BaseRetriever
 from .embeddings import OllamaEmbeddings
 
 # ---------------------------------------------------------------------
-# Constantes (ajusta si cambian)
+# Configuración
 # ---------------------------------------------------------------------
 
 load_dotenv()
@@ -32,6 +33,52 @@ OLLAMA_RERANK_MODEL = os.getenv("OLLAMA_RERANK_MODEL")
 
 EMBEDDINGS = OllamaEmbeddings()
 
+# ---------------------------------------------------------------------
+# Singletons de módulo — reutilizados entre requests
+# ---------------------------------------------------------------------
+
+_chroma_client: chromadb.HttpClient | None = None
+_chroma_vectorstore: Chroma | None = None
+_bm25_base: BM25Retriever | None = None
+
+
+def _get_chroma_client() -> chromadb.HttpClient:
+    global _chroma_client
+    if _chroma_client is None:
+        _chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+    return _chroma_client
+
+
+def _get_chroma_vectorstore() -> Chroma:
+    global _chroma_vectorstore
+    if _chroma_vectorstore is None:
+        _chroma_vectorstore = Chroma(
+            client=_get_chroma_client(),
+            collection_name=CHROMA_COLLECTION_NAME,
+            embedding_function=EMBEDDINGS,
+        )
+    return _chroma_vectorstore
+
+
+def _get_bm25_base() -> BM25Retriever:
+    """Construye el índice BM25 una sola vez y lo reutiliza entre requests."""
+    global _bm25_base
+    if _bm25_base is None:
+        docs = load_all_docs_from_chroma()
+        # k=50 como techo máximo; se limita en get_bm25_retriever()
+        _bm25_base = BM25Retriever.from_documents(docs, k=50)
+    return _bm25_base
+
+
+def init_retrievers() -> None:
+    """
+    Pre-calienta todos los singletons del retriever.
+    Debe llamarse en el evento de arranque de la aplicación (lifespan).
+    """
+    _get_chroma_client()
+    _get_chroma_vectorstore()
+    _get_bm25_base()
+
 
 # ---------------------------------------------------------------------
 # Utilidades: cargar docs de Chroma
@@ -40,12 +87,10 @@ EMBEDDINGS = OllamaEmbeddings()
 
 def load_all_docs_from_chroma() -> list[Document]:
     """
-    Lee todos los documentos de la colección en Chroma y los devuelve
-    como objetos LangChain Document.
+    Lee todos los documentos de la colección en Chroma usando el cliente
+    singleton (evita abrir nuevas conexiones en cada llamada).
     """
-    client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
-    collection = client.get_collection(name=CHROMA_COLLECTION_NAME)
-
+    collection = _get_chroma_client().get_collection(name=CHROMA_COLLECTION_NAME)
     raw = collection.get(include=["documents", "metadatas"])
 
     docs: list[Document] = []
@@ -67,34 +112,23 @@ def load_all_docs_from_chroma() -> list[Document]:
 
 
 # ---------------------------------------------------------------------
-# Constructores de retrievers simples
+# Constructores de retrievers
 # ---------------------------------------------------------------------
 
 
 def get_vector_retriever(k: int = 3):
     """
-    Retriever semántico (denso) usando Chroma + embeddings de Ollama.
+    Retriever semántico (denso) usando el vectorstore Chroma singleton.
     """
-    client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
-
-    vectorstore = Chroma(
-        client=client,
-        collection_name=CHROMA_COLLECTION_NAME,
-        embedding_function=EMBEDDINGS,
-    )
-
-    return vectorstore.as_retriever(search_kwargs={"k": k})
+    return _get_chroma_vectorstore().as_retriever(search_kwargs={"k": k})
 
 
-def get_bm25_retriever(k: int = 3):
+def get_bm25_retriever(k: int = 3) -> BM25Retriever:
     """
-    Retriever léxico BM25 basado en los mismos documentos que están en Chroma.
-    Carga todos los documentos en memoria (suficiente para la demo).
+    Retriever BM25 léxico respaldado por el índice pre-construido y cacheado.
+    Devuelve una copia ligera (sin recrear el índice) con el k solicitado.
     """
-    docs = load_all_docs_from_chroma()
-    bm25 = BM25Retriever.from_documents(docs)
-    bm25.k = k
-    return bm25
+    return _get_bm25_base().model_copy(update={"k": k})
 
 
 # ---------------------------------------------------------------------
@@ -104,8 +138,12 @@ def get_bm25_retriever(k: int = 3):
 
 class HybridEnsembleRetriever(BaseRetriever):
     """
-    Retriever híbrido que combina varios retrievers usando
+    Retriever híbrido que combina varios sub-retrievers usando
     Weighted Reciprocal Rank Fusion (RRF).
+
+    Los sub-retrievers se invocan en paralelo mediante un ThreadPoolExecutor,
+    reduciendo la latencia porque BM25 (CPU) y la búsqueda vectorial (IO/HTTP)
+    pueden ejecutarse concurrentemente.
     """
 
     retrievers: list[BaseRetriever]
@@ -114,26 +152,25 @@ class HybridEnsembleRetriever(BaseRetriever):
     id_key: str | None = "chunk_id"
 
     def _get_relevant_documents(self, query: str) -> list[Document]:
-        # 1) Obtener resultados de cada retriever
-        all_results: list[list[Document]] = [r.invoke(query) for r in self.retrievers]
+        # Invocar todos los sub-retrievers en paralelo
+        with ThreadPoolExecutor(max_workers=len(self.retrievers)) as pool:
+            futures = [pool.submit(r.invoke, query) for r in self.retrievers]
+            all_results: list[list[Document]] = [f.result() for f in futures]
 
-        # 2) Fusión de rankings con RRF ponderado
+        # Fusión de rankings con RRF ponderado
         scores: dict[str, float] = {}
         doc_by_id: dict[str, Document] = {}
 
         for docs, w in zip(all_results, self.weights, strict=False):
             for rank, doc in enumerate(docs, start=1):
-                # Identificador estable para el doc
                 if self.id_key and self.id_key in (doc.metadata or {}):
                     doc_id = str(doc.metadata[self.id_key])
                 else:
-                    # Fallback: usar el contenido completo
                     doc_id = doc.page_content
 
                 doc_by_id.setdefault(doc_id, doc)
                 scores[doc_id] = scores.get(doc_id, 0.0) + w / (rank + self.c)
 
-        # 3) Ordenar por score descendente
         sorted_ids = sorted(scores, key=scores.get, reverse=True)
         return [doc_by_id[i] for i in sorted_ids]
 
@@ -144,19 +181,16 @@ def get_ensemble_retriever(
     vector_weight: float = 0.7,
 ) -> HybridEnsembleRetriever:
     """
-    Construye el retriever híbrido BM25 + vectorial.
+    Construye el retriever híbrido BM25 + vectorial usando componentes cacheados.
     """
-    bm25_retriever = get_bm25_retriever(k=k)
-    vector_retriever = get_vector_retriever(k=k)
-
     return HybridEnsembleRetriever(
-        retrievers=[bm25_retriever, vector_retriever],
+        retrievers=[get_bm25_retriever(k=k), get_vector_retriever(k=k)],
         weights=[bm25_weight, vector_weight],
     )
 
 
 # ---------------------------------------------------------------------
-# Reranker con modelo de Ollama
+# Reranker con modelo de Ollama (opcional, no usado en el flujo principal)
 # ---------------------------------------------------------------------
 
 
@@ -177,7 +211,6 @@ class OllamaReranker:
         self.timeout = timeout
 
     def _score_one(self, query: str, doc: Document) -> float:
-        # Truncar contenido para no enviar textos gigantes
         content = doc.page_content
         if len(content) > 1500:
             content = content[:1500]
@@ -249,16 +282,13 @@ def demo(
     """
     Demostración rápida de uso del retriever híbrido y el reranker.
     """
-    # 1) Retrieve híbrido con más candidatos
     base_retriever = get_ensemble_retriever(k=5)
     candidates = base_retriever.invoke(query)
 
-    # 2) Opcional: Reranking con LLM de Ollama
     if use_reranker:
         reranker = OllamaReranker()
         docs = reranker.rerank(query, candidates, top_k=k)
     else:
-        # Sin reranker, solo usamos los primeros k candidatos del ensemble
         docs = candidates[:k]
 
     print(f"\nConsulta: {query}\n")
@@ -272,8 +302,4 @@ def demo(
 
 
 if __name__ == "__main__":
-    # Con reranker
     demo(query="¿cómo se llamaba el gato del cuento?")
-
-    # Sin reranker
-    # demo(use_reranker=False)

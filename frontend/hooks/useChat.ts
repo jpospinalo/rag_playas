@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { queryRag } from "@/lib/api";
+import { queryRagStream } from "@/lib/api";
 import type { Message } from "@/lib/types";
 
 export interface UseChatReturn {
@@ -37,18 +37,37 @@ export function useChat(): UseChatReturn {
     setLoading(true);
     setError(null);
 
+    // Insert assistant placeholder before streaming starts so the user
+    // sees the response area appear immediately.
+    const assistantId = crypto.randomUUID();
+    setMessages((prev) => [
+      ...prev,
+      { id: assistantId, role: "assistant", text: "", sources: [] },
+    ]);
+
     try {
-      const data = await queryRag({ question: q });
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          text: data.answer,
-          sources: data.sources,
-        },
-      ]);
+      for await (const event of queryRagStream({ question: q })) {
+        if (event.type === "token") {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, text: m.text + event.content }
+                : m
+            )
+          );
+        } else if (event.type === "sources") {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, sources: event.sources } : m
+            )
+          );
+        } else if (event.type === "error") {
+          throw new Error(event.detail);
+        }
+      }
     } catch (err) {
+      // Remove the empty placeholder on error so the UI stays clean.
+      setMessages((prev) => prev.filter((m) => m.id !== assistantId));
       setError(
         err instanceof Error
           ? err.message

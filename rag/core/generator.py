@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import warnings
+from collections.abc import AsyncIterator
 from functools import lru_cache
 
 from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from .retriever import get_ensemble_retriever
@@ -93,29 +94,8 @@ def _get_prompt_for_model(model_name: str) -> ChatPromptTemplate:
 
 
 # ---------------------------------------------------------------------
-# Chain RAG
+# RAG — flujo síncrono (JSON endpoint)
 # ---------------------------------------------------------------------
-
-
-def build_rag_chain(k_candidates: int = 8):
-    """
-    input (str) -> retriever -> docs -> contexto
-                 -> PROMPT -> LLM -> texto
-    """
-    llm = _get_llm()
-    prompt = _get_prompt_for_model(os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
-    retriever = get_ensemble_retriever(k=k_candidates)
-
-    rag_chain = (
-        {
-            "context": retriever | RunnableLambda(_build_context_block),
-            "question": RunnablePassthrough(),
-        }
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
-    return rag_chain, retriever
 
 
 def generate_answer(
@@ -124,30 +104,61 @@ def generate_answer(
     k_candidates: int = 8,
 ) -> tuple[str, list[Document]]:
     """
-    1) Usa un chain RAG (retriever + prompt + LLM) para generar la respuesta.
-    2) Recupera también los documentos usados (top-k del ensemble).
+    Recupera candidatos una sola vez, construye el contexto y llama al LLM.
+    Devuelve (respuesta, top-k documentos fuente).
 
-    Devuelve:
-        (respuesta, documentos_utilizados)
+    Antes se invocaba el retriever dos veces (una dentro del chain y otra
+    para obtener los documentos); ahora se invoca una única vez.
     """
-    rag_chain, retriever = build_rag_chain(k_candidates=k_candidates)
-
-    # 1) Respuesta usando el chain completo (ya es str)
-    answer = rag_chain.invoke(question)
-    if isinstance(answer, str):
-        answer = answer.strip()
-    else:
-        # Fallback defensivo por si el parser no se aplicara
-        answer = str(getattr(answer, "content", answer)).strip()
-
-    # 2) Documentos (los mismos candidatos que se usan para el contexto)
+    retriever = get_ensemble_retriever(k=k_candidates)
     candidates = retriever.invoke(question)
-    docs = candidates[:k] if candidates else []
+    context = _build_context_block(candidates)
+
+    prompt = _get_prompt_for_model(os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
+    chain = prompt | _get_llm() | StrOutputParser()
+    answer = chain.invoke({"context": context, "question": question}).strip()
+
+    docs = candidates[:k]
 
     if not docs and not answer:
         return "No se encontraron fragmentos relevantes en la base de conocimiento.", []
 
     return answer, docs
+
+
+# ---------------------------------------------------------------------
+# RAG — flujo asíncrono con streaming (SSE endpoint)
+# ---------------------------------------------------------------------
+
+
+async def generate_answer_stream(
+    question: str,
+    k: int = 5,
+    k_candidates: int = 8,
+) -> AsyncIterator[tuple[str, list[Document] | None]]:
+    """
+    Generador asíncrono para streaming SSE.
+
+    Yields:
+        (token, None)          — fragmento de texto del LLM mientras genera.
+        ("", docs)             — evento final con la lista de documentos fuente.
+
+    El retriever se invoca una sola vez (en un hilo, para no bloquear el
+    event loop) antes de iniciar el streaming del LLM.
+    """
+    retriever = get_ensemble_retriever(k=k_candidates)
+    candidates = await asyncio.to_thread(retriever.invoke, question)
+    context = _build_context_block(candidates)
+    docs = candidates[:k]
+
+    prompt = _get_prompt_for_model(os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
+    messages = prompt.format_messages(context=context, question=question)
+
+    async for chunk in _get_llm().astream(messages):
+        if chunk.content:
+            yield chunk.content, None
+
+    yield "", docs
 
 
 # ---------------------------------------------------------------------
