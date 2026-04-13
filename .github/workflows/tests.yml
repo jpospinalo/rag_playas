@@ -31,7 +31,7 @@ jobs:
         run: uv sync --group dev
 
       - name: Run unit tests
-        run: uv run pytest tests/unit/ -v --tb=short --cov=src --cov-report=xml --cov-report=term-missing
+        run: uv run pytest tests/unit/ -v --tb=short --cov=rag --cov=ingest --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage report
         uses: codecov/codecov-action@v4

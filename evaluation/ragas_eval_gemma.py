@@ -1,5 +1,7 @@
 # evaluation/ragas_eval_gemmini.py
 
+# TODO: Cambiar a playas (actualmente poe)
+
 from __future__ import annotations
 
 import asyncio
@@ -21,7 +23,7 @@ from ragas.metrics import (
 )
 from ragas.run_config import RunConfig
 
-from src.backend.generator import generate_answer
+from rag.core.generator import generate_answer
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 

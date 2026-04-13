@@ -2,7 +2,7 @@
 import pytest
 from langchain_core.documents import Document
 
-from src.ingest.normalize import normalize_documents, normalize_metadata, normalize_text
+from ingest.normalize import normalize_documents, normalize_metadata, normalize_text
 
 
 def test_normalize_text_collapses_blank_lines_to_max_two():

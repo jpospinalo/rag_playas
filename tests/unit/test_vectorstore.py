@@ -1,7 +1,7 @@
 # tests/unit/test_vectorstore.py
 import json
 
-from src.backend.vectorstore import load_gold_documents, sanitize_metadata
+from rag.core.vectorstore import load_gold_documents, sanitize_metadata
 
 
 def test_sanitize_metadata_preserves_primitives():

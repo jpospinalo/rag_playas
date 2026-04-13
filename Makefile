@@ -1,22 +1,22 @@
-.PHONY: install lint format typecheck test test-cov pipeline app clean help
+.PHONY: install lint format typecheck test test-cov test-integration pipeline app clean help
 
 install:  ## Instalar dependencias (incluidas las de desarrollo)
 	uv sync --group dev
 
 lint:  ## Verificar errores de estilo y lógica con ruff
-	uv run ruff check src/ tests/ evaluation/
+	uv run ruff check rag/ ingest/ tests/ evaluation/
 
 format:  ## Formatear código con ruff
-	uv run ruff format src/ tests/ evaluation/
+	uv run ruff format rag/ ingest/ tests/ evaluation/
 
 typecheck:  ## Verificar tipos con mypy
-	uv run mypy src/
+	uv run mypy rag/ ingest/
 
 test:  ## Ejecutar tests unitarios
 	uv run pytest tests/unit/ -v
 
 test-cov:  ## Ejecutar tests con informe de cobertura
-	uv run pytest tests/unit/ --cov=src --cov-report=term-missing --cov-report=html
+	uv run pytest tests/unit/ --cov=rag --cov=ingest --cov-report=term-missing --cov-report=html
 
 test-integration:  ## Ejecutar tests de integración (requiere servicios activos)
 	uv run pytest -m integration -v
@@ -24,8 +24,8 @@ test-integration:  ## Ejecutar tests de integración (requiere servicios activos
 pipeline:  ## Ejecutar el pipeline completo de ingesta
 	bash scripts/run_pipeline.sh
 
-app:  ## Lanzar la interfaz Gradio
-	uv run python -m src.frontend.gradio_app
+app:  ## Lanzar la API FastAPI
+	uv run uvicorn rag.api.main:app --reload --port 8080
 
 clean:  ## Eliminar artefactos generados
 	find . -type d -name __pycache__ -exec rm -rf {} +

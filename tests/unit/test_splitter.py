@@ -1,7 +1,7 @@
 # tests/unit/test_splitter.py
 from langchain_core.documents import Document
 
-from src.ingest.splitter_and_enrich import _build_splitter, _chunk_section
+from ingest.splitter_and_enrich import _build_splitter, _chunk_section
 
 
 def _section_doc(source: str = "sentencia_2024.pdf", section_index: int = 1) -> Document:

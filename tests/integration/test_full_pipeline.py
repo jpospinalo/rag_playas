@@ -5,7 +5,7 @@ from langchain_core.documents import Document
 
 @pytest.mark.integration
 def test_generate_answer_contract_returns_trimmed_answer_and_top_k_docs(monkeypatch):
-    from src.backend import generator
+    from rag.core import generator
 
     docs = [
         Document(page_content="Hecho relevante 1", metadata={"chunk_id": "a"}),
@@ -34,7 +34,7 @@ def test_generate_answer_contract_returns_trimmed_answer_and_top_k_docs(monkeypa
 
 @pytest.mark.integration
 def test_generate_answer_contract_returns_fallback_when_no_answer_and_no_docs(monkeypatch):
-    from src.backend import generator
+    from rag.core import generator
 
     class FakeChain:
         def invoke(self, _: str) -> str:

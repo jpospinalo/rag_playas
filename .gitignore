@@ -48,3 +48,7 @@ coverage.xml
 # 9) Skills
 .agents/
 skills-lock.json
+
+# 10) Frontend
+node_modules/
+dist/

@@ -1,7 +1,7 @@
 # tests/unit/test_generator.py
 from langchain_core.documents import Document
 
-from src.backend.generator import _build_context_block
+from rag.core.generator import _build_context_block
 
 
 def test_build_context_block_formats_docs():
