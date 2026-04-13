@@ -9,16 +9,18 @@ interface MessageListProps {
 export function MessageList({ messages }: MessageListProps) {
   return (
     <>
-      {messages.map((msg) =>
-        msg.role === "user" ? (
-          <UserBubble key={msg.id} text={msg.text} />
-        ) : (
-          <AssistantBubble
-            key={msg.id}
-            text={msg.text}
-            sources={msg.sources ?? []}
-          />
-        )
+      {messages.map(
+        (msg) =>
+          msg.text.length > 0 &&
+          (msg.role === "user" ? (
+            <UserBubble key={msg.id} text={msg.text} />
+          ) : (
+            <AssistantBubble
+              key={msg.id}
+              text={msg.text}
+              sources={msg.sources ?? []}
+            />
+          )),
       )}
     </>
   );
