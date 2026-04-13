@@ -25,3 +25,10 @@ class QueryResponse(BaseModel):
     sources: list[SourceDocument] = Field(
         default_factory=list, description="Fragmentos recuperados utilizados como contexto"
     )
+    enriched_query: str | None = Field(
+        default=None,
+        description=(
+            "Consulta expandida usada internamente para la recuperación de documentos. "
+            "Útil para depuración y evaluación del enriquecimiento."
+        ),
+    )

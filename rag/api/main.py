@@ -112,7 +112,7 @@ async def query(request: QueryRequest) -> QueryResponse:
     Uses a single retrieval pass — no duplicate retriever invocations.
     """
     try:
-        answer_raw, docs = generate_answer(
+        answer_raw, docs, enriched_query = generate_answer(
             question=request.question,
             k=request.k,
             k_candidates=request.k_candidates,
@@ -123,6 +123,7 @@ async def query(request: QueryRequest) -> QueryResponse:
     return QueryResponse(
         answer=_clean_answer(answer_raw),
         sources=[_doc_to_source(d) for d in docs],
+        enriched_query=enriched_query,
     )
 
 
@@ -142,7 +143,7 @@ async def query_stream(request: QueryRequest):
 
     async def event_generator():
         try:
-            async for token, docs in generate_answer_stream(
+            async for token, docs, enriched_query in generate_answer_stream(
                 question=request.question,
                 k=request.k,
                 k_candidates=request.k_candidates,
@@ -152,7 +153,13 @@ async def query_stream(request: QueryRequest):
                     yield f"data: {payload}\n\n"
                 else:
                     sources = [_doc_to_source(d).model_dump() for d in docs]
-                    payload = json.dumps({"type": "sources", "sources": sources})
+                    payload = json.dumps(
+                        {
+                            "type": "sources",
+                            "sources": sources,
+                            "enriched_query": enriched_query,
+                        }
+                    )
                     yield f"data: {payload}\n\n"
                     yield "data: [DONE]\n\n"
         except Exception as exc:

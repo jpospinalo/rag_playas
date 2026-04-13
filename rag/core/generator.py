@@ -14,6 +14,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+from .query_enricher import enrich_query, enrich_query_async
 from .retriever import get_ensemble_retriever
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -195,16 +196,20 @@ def generate_answer(
     question: str,
     k: int = 5,
     k_candidates: int = 10,
-) -> tuple[str, list[Document]]:
+) -> tuple[str, list[Document], str | None]:
     """
     Recupera candidatos una sola vez, construye el contexto y llama al LLM.
-    Devuelve (respuesta, top-k documentos fuente).
+    Devuelve (respuesta, documentos fuente, expanded_query).
 
-    Antes se invocaba el retriever dos veces (una dentro del chain y otra
-    para obtener los documentos); ahora se invoca una única vez.
+    El paso de enriquecimiento reescribe la consulta antes de la recuperación
+    para mejorar el recall del retriever híbrido BM25 + vector.  La pregunta
+    original del usuario se mantiene intacta para el prompt de generación final.
     """
+    enriched = enrich_query(question)
+    retrieval_query = enriched.expanded_query
+
     retriever = get_ensemble_retriever(k=k_candidates)
-    candidates = retriever.invoke(question)
+    candidates = retriever.invoke(retrieval_query)
     docs = candidates
     context = _build_context_block(docs)
 
@@ -213,9 +218,9 @@ def generate_answer(
     answer = chain.invoke({"context": context, "question": question}).strip()
 
     if not docs and not answer:
-        return "No se encontraron fragmentos relevantes en la base de conocimiento.", []
+        return "No se encontraron fragmentos relevantes en la base de conocimiento.", [], retrieval_query
 
-    return answer, docs
+    return answer, docs, retrieval_query
 
 
 # ---------------------------------------------------------------------
@@ -227,19 +232,23 @@ async def generate_answer_stream(
     question: str,
     k: int = 5,
     k_candidates: int = 10,
-) -> AsyncIterator[tuple[str, list[Document] | None]]:
+) -> AsyncIterator[tuple[str, list[Document] | None, str | None]]:
     """
     Generador asíncrono para streaming SSE.
 
     Yields:
-        (token, None)          — fragmento de texto del LLM mientras genera.
-        ("", docs)             — evento final con la lista de documentos fuente.
+        (token, None, None)             — fragmento de texto del LLM mientras genera.
+        ("", docs, expanded_query)      — evento final con documentos fuente y la
+                                          consulta enriquecida usada en recuperación.
 
-    El retriever se invoca una sola vez (en un hilo, para no bloquear el
-    event loop) antes de iniciar el streaming del LLM.
+    El enriquecimiento y la recuperación se ejecutan antes de iniciar el
+    streaming, ambos en hilos para no bloquear el event loop.
     """
+    enriched = await enrich_query_async(question)
+    retrieval_query = enriched.expanded_query
+
     retriever = get_ensemble_retriever(k=k_candidates)
-    candidates = await asyncio.to_thread(retriever.invoke, question)
+    candidates = await asyncio.to_thread(retriever.invoke, retrieval_query)
     docs = candidates
     context = _build_context_block(docs)
 
@@ -248,9 +257,9 @@ async def generate_answer_stream(
 
     async for chunk in _get_llm().astream(messages):
         if chunk.content:
-            yield chunk.content, None
+            yield chunk.content, None, None
 
-    yield "", docs
+    yield "", docs, retrieval_query
 
 
 # ---------------------------------------------------------------------
@@ -259,7 +268,7 @@ async def generate_answer_stream(
 
 
 def demo(question: str = "¿quién era Leonora?") -> None:
-    answer, docs = generate_answer(
+    answer, docs, expanded_query = generate_answer(
         question=question,
         k=5,
         k_candidates=10,
@@ -267,6 +276,8 @@ def demo(question: str = "¿quién era Leonora?") -> None:
 
     print("\n=== PREGUNTA ===")
     print(question)
+    print("\n=== CONSULTA ENRIQUECIDA (usada en recuperación) ===")
+    print(expanded_query)
 
     print("\n=== RESPUESTA (Gemini) ===")
     print(answer)
