@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { ChatHeader } from "@/components/chat/ChatHeader";
 import { ChatInterface } from "@/components/chat/ChatInterface";
 
 export const metadata: Metadata = {
@@ -12,7 +11,6 @@ export const metadata: Metadata = {
 export default function ChatPage() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background">
-      <ChatHeader />
       <ChatInterface />
     </div>
   );

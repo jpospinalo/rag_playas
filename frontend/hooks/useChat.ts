@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { queryRagStream } from "@/lib/api";
 import type { Message } from "@/lib/types";
 
@@ -8,22 +8,21 @@ export interface UseChatReturn {
   messages: Message[];
   input: string;
   loading: boolean;
+  isStreaming: boolean;
   error: string | null;
-  messagesEndRef: React.RefObject<HTMLDivElement | null>;
   setInput: (value: string) => void;
   submit: (question: string) => Promise<void>;
+  resetChat: () => void;
 }
 
 export function useChat(): UseChatReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  // Track whether the first token has been received to flip isStreaming exactly once.
+  const streamingStartedRef = useRef(false);
 
   async function submit(question: string): Promise<void> {
     const q = question.trim();
@@ -35,7 +34,9 @@ export function useChat(): UseChatReturn {
     ]);
     setInput("");
     setLoading(true);
+    setIsStreaming(false);
     setError(null);
+    streamingStartedRef.current = false;
 
     // Insert assistant placeholder before streaming starts so the user
     // sees the response area appear immediately.
@@ -48,6 +49,11 @@ export function useChat(): UseChatReturn {
     try {
       for await (const event of queryRagStream({ question: q })) {
         if (event.type === "token") {
+          // Flip to streaming on first token so LoadingBubble disappears.
+          if (!streamingStartedRef.current) {
+            streamingStartedRef.current = true;
+            setIsStreaming(true);
+          }
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
@@ -75,8 +81,18 @@ export function useChat(): UseChatReturn {
       );
     } finally {
       setLoading(false);
+      setIsStreaming(false);
     }
   }
 
-  return { messages, input, loading, error, messagesEndRef, setInput, submit };
+  function resetChat(): void {
+    setMessages([]);
+    setInput("");
+    setLoading(false);
+    setIsStreaming(false);
+    setError(null);
+    streamingStartedRef.current = false;
+  }
+
+  return { messages, input, loading, isStreaming, error, setInput, submit, resetChat };
 }
