@@ -71,7 +71,7 @@ rag_playas/
 │   ├── pyproject.toml
 │   ├── config.py                ← variables de entorno para el paquete ingest
 │   ├── pdf_to_md/               ← conversión PDF → Markdown (Docling)
-│   ├── loaders.py               ← carga Markdown de bronze → silver
+│   ├── loaders.py               ← carga Markdown de bronze → silver (incluye metadatos del CSV)
 │   ├── normalize.py             ← limpieza y normalización de metadata
 │   ├── sections.py              ← segmentación por secciones
 │   ├── splitter_and_enrich.py   ← chunking + enriquecimiento con Gemini (silver → gold)
@@ -81,7 +81,7 @@ rag_playas/
 │   └── package.json
 │
 ├── data/
-│   ├── raw/                     ← PDFs originales
+│   ├── raw/                     ← PDFs originales + metadata.csv (metadatos legales)
 │   ├── bronze/                  ← Markdown limpio (con imágenes en bronze/images/)
 │   ├── silver/                  ← documentos normalizados (JSONL por archivo)
 │   └── gold/                    ← chunks enriquecidos (resumen, keywords, entidades)
@@ -211,7 +211,7 @@ Cada paso puede ejecutarse individualmente o todos de un solo comando:
 # 1) PDF → Markdown limpio          →  data/bronze/
 uv run python -m ingest.pdf_to_md
 
-# 2) Normalización + secciones      →  data/silver/
+# 2) Normalización + secciones + metadatos CSV →  data/silver/
 uv run python -m ingest.loaders
 
 # 3) Chunking + enriquecimiento     →  data/gold/
