@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test test-cov test-integration pipeline app clean help
+.PHONY: install lint format typecheck test test-cov test-integration pipeline app frontend clean help
 
 install:  ## Instalar dependencias (incluidas las de desarrollo)
 	uv sync --group dev
@@ -26,6 +26,9 @@ pipeline:  ## Ejecutar el pipeline completo de ingesta
 
 app:  ## Lanzar la API FastAPI
 	uv run uvicorn rag.api.main:app --reload --port 8080
+
+frontend:  ## Lanzar el frontend Next.js
+	cd frontend && bun run dev
 
 clean:  ## Eliminar artefactos generados
 	find . -type d -name __pycache__ -exec rm -rf {} +
