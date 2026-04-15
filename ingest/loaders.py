@@ -7,6 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_core.documents import Document
 
+from .metadata_csv import get_metadata_for_file, load_metadata_csv
 from .normalize import normalize_documents
 from .sections import split_by_sections
 from .utils import save_docs_jsonl_per_file
@@ -55,6 +56,15 @@ def load_documents() -> list[Document]:
     docs = normalize_documents(raw_docs)
     print(f"Documentos normalizados: {len(docs)}")
 
+    matched_count = 0
+    csv_rows = len(load_metadata_csv())
+    for doc in docs:
+        csv_meta = get_metadata_for_file(doc.metadata.get("source", ""))
+        if csv_meta:
+            doc.metadata.update(csv_meta)
+            matched_count += 1
+            print(f"  → Metadatos CSV encontrados para: {doc.metadata.get('source', '?')}")
+
     sectioned_docs: list[Document] = []
     for doc in docs:
         sections = split_by_sections(doc)
@@ -77,7 +87,11 @@ def load_documents() -> list[Document]:
     )
 
     save_docs_jsonl_per_file(sectioned_docs, SILVER_DIR)
-    print(f"Guardado en: {SILVER_DIR}\n")
+    print(f"Guardado en: {SILVER_DIR}")
+
+    print(
+        f"\nMetadatos CSV: {matched_count}/{csv_rows} filas con archivo ({len(docs)} documentos processados)\n"
+    )
 
     return sectioned_docs
 
