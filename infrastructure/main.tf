@@ -89,10 +89,11 @@ resource "aws_security_group" "ollama" {
 # EC2 Instances
 # ------------------------------------------------------------------------------
 resource "aws_instance" "chromadb" {
-  ami                    = data.aws_ami.ubuntu_24.id
-  instance_type          = "t3.medium"
-  key_name               = var.key_pair_name
-  vpc_security_group_ids = [aws_security_group.chromadb.id]
+  ami                         = data.aws_ami.ubuntu_24.id
+  instance_type               = "t3.medium"
+  key_name                    = var.key_pair_name
+  vpc_security_group_ids      = [aws_security_group.chromadb.id]
+  user_data_replace_on_change = true
 
   root_block_device {
     volume_size = 12
@@ -107,10 +108,11 @@ resource "aws_instance" "chromadb" {
 }
 
 resource "aws_instance" "ollama" {
-  ami                    = data.aws_ami.ubuntu_24.id
-  instance_type          = "t3.large"
-  key_name               = var.key_pair_name
-  vpc_security_group_ids = [aws_security_group.ollama.id]
+  ami                         = data.aws_ami.ubuntu_24.id
+  instance_type               = "t3.large"
+  key_name                    = var.key_pair_name
+  vpc_security_group_ids      = [aws_security_group.ollama.id]
+  user_data_replace_on_change = true
 
   root_block_device {
     volume_size = 20

@@ -4,14 +4,21 @@ exec > >(tee -a /var/log/user-data.log) 2>&1
 
 echo "=== Inicio setup ChromaDB: $(date) ==="
 
-# CRITICO en Ubuntu 24.04: needrestart envía SIGTERM a cloud-final.service cuando
-# apt-get upgrade detecta que el servicio necesita reiniciarse, matando cloud-init.
-# NEEDRESTART_SUSPEND=1 desactiva ese comportamiento durante este script.
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
 export NEEDRESTART_SUSPEND=1
 
-# DPkg::Lock::Timeout=300: en lugar de fallar inmediatamente si apt-daily.service
-# tiene el lock, apt espera hasta 5 minutos antes de rendirse.
+# Ubuntu 24.04 arranca con unattended-upgrades corriendo, lo que bloquea dpkg.
+# Hay que esperar que libere el lock antes de cualquier operación con apt.
+echo "Esperando que unattended-upgrades libere el lock de dpkg..."
+systemctl stop unattended-upgrades || true
+while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+   || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+  echo "  dpkg ocupado, esperando 5s..."
+  sleep 5
+done
+echo "Lock liberado."
+
 APT_OPTS="-o DPkg::Lock::Timeout=300 -o Acquire::Retries=3 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
 # 1. Actualizar sistema
