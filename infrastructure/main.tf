@@ -99,7 +99,7 @@ resource "aws_instance" "chromadb" {
     volume_type = "gp3"
   }
 
-  user_data = "#!/bin/bash\n${file("${path.module}/../scripts/ec2_chroma_db.sh")}"
+  user_data = file("${path.module}/../scripts/ec2_chroma_db.sh")
 
   tags = {
     Name = "${var.project}-chromadb"
@@ -117,7 +117,7 @@ resource "aws_instance" "ollama" {
     volume_type = "gp3"
   }
 
-  user_data = "#!/bin/bash\n${file("${path.module}/../scripts/ec2_ollama_embeddings.sh")}"
+  user_data = file("${path.module}/../scripts/ec2_ollama_embeddings.sh")
 
   tags = {
     Name = "${var.project}-ollama"
