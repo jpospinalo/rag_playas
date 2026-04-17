@@ -25,9 +25,7 @@ def _get_client():
 def get_bucket() -> str:
     bucket = os.environ.get("S3_BUCKET_NAME", "")
     if not bucket:
-        raise RuntimeError(
-            "S3_BUCKET_NAME no está definida. Agrégala al archivo .env."
-        )
+        raise RuntimeError("S3_BUCKET_NAME no está definida. Agrégala al archivo .env.")
     return bucket
 
 

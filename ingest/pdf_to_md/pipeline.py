@@ -129,9 +129,7 @@ def convert_pdfs_to_markdown() -> list[str]:
     converter = _build_converter()
     generated: list[str] = []
 
-    with tempfile.TemporaryDirectory() as raw_tmp, \
-         tempfile.TemporaryDirectory() as bronze_tmp:
-
+    with tempfile.TemporaryDirectory() as raw_tmp, tempfile.TemporaryDirectory() as bronze_tmp:
         raw_tmp_path = Path(raw_tmp)
         bronze_tmp_path = Path(bronze_tmp)
 
@@ -186,9 +184,7 @@ def process_single_pdf(
     output_prefix = output_prefix or BRONZE_PREFIX
     converter = _build_converter()
 
-    with tempfile.TemporaryDirectory() as raw_tmp, \
-         tempfile.TemporaryDirectory() as bronze_tmp:
-
+    with tempfile.TemporaryDirectory() as raw_tmp, tempfile.TemporaryDirectory() as bronze_tmp:
         raw_tmp_path = Path(raw_tmp)
         bronze_tmp_path = Path(bronze_tmp)
 

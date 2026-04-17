@@ -289,9 +289,7 @@ def split_and_enrich_directory(
 
         enriched: list[Document] = []
         for i, chunk in enumerate(all_chunks):
-            logger.debug(
-                "Enriqueciendo chunk %d/%d de %s", i + 1, len(all_chunks), filename
-            )
+            logger.debug("Enriqueciendo chunk %d/%d de %s", i + 1, len(all_chunks), filename)
             print(
                 f"  [{i + 1:>3}/{len(all_chunks)}] enriqueciendo chunk_id={chunk.metadata.get('chunk_id')}"
             )

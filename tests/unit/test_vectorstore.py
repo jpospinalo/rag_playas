@@ -39,9 +39,7 @@ def test_load_gold_records_reads_jsonl_records_from_s3():
             "metadata": {"chunk_id": "empty_chunk"},
         },
     ]
-    jsonl_content = (
-        "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n"
-    )
+    jsonl_content = "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n"
 
     with patch("rag.core.vectorstore.read_text", return_value=jsonl_content):
         ids, texts, embed_texts, metadatas = load_gold_records("gold/expediente.jsonl")
