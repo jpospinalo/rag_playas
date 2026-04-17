@@ -1,5 +1,6 @@
 # tests/unit/test_vectorstore.py
 import json
+from unittest.mock import patch
 
 from rag.core.vectorstore import load_gold_records, sanitize_metadata
 
@@ -23,8 +24,7 @@ def test_sanitize_metadata_converts_dicts():
     assert isinstance(result["nested"], str)
 
 
-def test_load_gold_records_reads_jsonl_records_from_file(tmp_path):
-    gold_file = tmp_path / "expediente.jsonl"
+def test_load_gold_records_reads_jsonl_records_from_s3():
     records = [
         {
             "page_content": "Texto de doctrina aplicable.",
@@ -39,11 +39,12 @@ def test_load_gold_records_reads_jsonl_records_from_file(tmp_path):
             "metadata": {"chunk_id": "empty_chunk"},
         },
     ]
-    with gold_file.open("w", encoding="utf-8") as fh:
-        for record in records:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    jsonl_content = (
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n"
+    )
 
-    ids, texts, embed_texts, metadatas = load_gold_records(str(gold_file))
+    with patch("rag.core.vectorstore.read_text", return_value=jsonl_content):
+        ids, texts, embed_texts, metadatas = load_gold_records("gold/expediente.jsonl")
 
     assert ids == ["exp_001_chunk_0"]
     assert texts == ["Texto de doctrina aplicable."]
