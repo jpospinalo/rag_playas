@@ -57,3 +57,6 @@ dist/
 *tfstate*
 .terraform.lock*
 .terraform/
+
+# 12) Claude
+settings.local.json
