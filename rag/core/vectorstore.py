@@ -145,13 +145,13 @@ def build_or_load_vectorstore(
     collection = client.get_or_create_collection(name=collection_name)
 
     count_before = collection.count()
-    file_names = sorted(f for f in os.listdir(gold_dir) if f.endswith('.jsonl'))
+    file_names = sorted(f for f in os.listdir(gold_dir) if f.endswith(".jsonl"))
     total_files = len(file_names)
 
     if not file_names:
-        raise RuntimeError(f'No se encontraron archivos .jsonl en {gold_dir}')
+        raise RuntimeError(f"No se encontraron archivos .jsonl en {gold_dir}")
 
-    print(f'[Chroma] Colección: {count_before} docs → ingestando {total_files} archivos...')
+    print(f"[Chroma] Colección: {count_before} docs → ingestando {total_files} archivos...")
 
     total_new = 0
     files_indexed = 0
@@ -162,16 +162,18 @@ def build_or_load_vectorstore(
         ids, texts, embed_texts, metadatas = load_gold_records(path)
 
         if not ids:
-            print(f'[{file_idx}/{total_files}] {file_name} → vacío → skipped')
+            print(f"[{file_idx}/{total_files}] {file_name} → vacío → skipped")
             files_skipped += 1
             continue
 
         existing = collection.get(ids=ids, include=[])
-        existing_ids = set(existing.get('ids', []))
+        existing_ids = set(existing.get("ids", []))
         new_ids_set = set(ids) - existing_ids
 
         if not new_ids_set:
-            print(f'[{file_idx}/{total_files}] {file_name} | {len(ids)} chunks | 0 nuevos (ya indexados)')
+            print(
+                f"[{file_idx}/{total_files}] {file_name} | {len(ids)} chunks | 0 nuevos (ya indexados)"
+            )
             files_skipped += 1
             continue
 
@@ -186,7 +188,7 @@ def build_or_load_vectorstore(
                 new_embed_texts.append(et)
                 new_metadatas.append(m)
 
-        print(f'[{file_idx}/{total_files}] {file_name} | {len(ids)} chunks | {len(new_ids)} nuevos')
+        print(f"[{file_idx}/{total_files}] {file_name} | {len(ids)} chunks | {len(new_ids)} nuevos")
 
         num_batches = (len(new_ids) + BATCH_SIZE - 1) // BATCH_SIZE
 
@@ -199,7 +201,7 @@ def build_or_load_vectorstore(
             batch_metas = new_metadatas[start:end]
 
             if num_batches > 1:
-                print(f'       Batch {batch_idx + 1}/{num_batches}: {len(batch_ids)} chunks...')
+                print(f"       Batch {batch_idx + 1}/{num_batches}: {len(batch_ids)} chunks...")
 
             for attempt in range(MAX_RETRIES):
                 try:
@@ -214,40 +216,49 @@ def build_or_load_vectorstore(
                     )
                 except Exception as exc:
                     if attempt < MAX_RETRIES - 1:
-                        backoff = INITIAL_BACKOFF * (2 ** attempt)
+                        backoff = INITIAL_BACKOFF * (2**attempt)
                         print(
-                            f'       Batch {batch_idx + 1} error '
-                            f'(intento {attempt + 1}/{MAX_RETRIES}): {exc}. '
-                            f'Reintentando en {backoff:.1f}s...'
+                            f"       Batch {batch_idx + 1} error "
+                            f"(intento {attempt + 1}/{MAX_RETRIES}): {exc}. "
+                            f"Reintentando en {backoff:.1f}s..."
                         )
                         time.sleep(backoff)
                     else:
                         exc_str = str(exc).lower()
-                        if any(k in exc_str for k in
-                               ['connect', 'connection', 'refused', 'timeout', 'reset', 'socket', 'httpexception']):
-                            service = 'ChromaDB (conexión)'
-                        elif any(k in exc_str for k in
-                                 ['ollama', 'embed', 'embedding', 'model']):
-                            service = 'Ollama (embeddings)'
+                        if any(
+                            k in exc_str
+                            for k in [
+                                "connect",
+                                "connection",
+                                "refused",
+                                "timeout",
+                                "reset",
+                                "socket",
+                                "httpexception",
+                            ]
+                        ):
+                            service = "ChromaDB (conexión)"
+                        elif any(k in exc_str for k in ["ollama", "embed", "embedding", "model"]):
+                            service = "Ollama (embeddings)"
                         else:
-                            service = f'desconocido: {type(exc).__name__}'
+                            service = f"desconocido: {type(exc).__name__}"
 
                         raise RuntimeError(
-                            f'ERROR en batch {batch_idx + 1}/{num_batches} de '
-                            f'[{file_idx}/{total_files}] {file_name} → {service}. '
-                            f'Chunks: {batch_ids[:5]}'
+                            f"ERROR en batch {batch_idx + 1}/{num_batches} de "
+                            f"[{file_idx}/{total_files}] {file_name} → {service}. "
+                            f"Chunks: {batch_ids[:5]}"
                         ) from exc
 
             if num_batches == 1:
-                print(f'       {len(batch_ids)} chunks → OK')
+                print(f"       {len(batch_ids)} chunks → OK")
 
         total_new += len(new_ids)
         files_indexed += 1
 
     count_after = collection.count()
     print(
-        f'[Chroma] {count_before} → {count_after} docs '
-        f'(+{total_new} nuevos, {files_indexed} indexados, {files_skipped} skipped)'
+        f"[Chroma] {count_before} → {count_after} docs "
+        f"(+{total_new} nuevos, {files_indexed} indexados, {files_skipped} skipped)"
     )
 
     return collection

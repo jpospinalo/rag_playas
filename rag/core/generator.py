@@ -31,15 +31,17 @@ def _build_context_block(docs: list[Document]) -> str:
     bloques: list[str] = []
     for i, d in enumerate(docs, start=1):
         meta = d.metadata or {}
-        source   = meta.get("source", "desconocido")
+        source = meta.get("source", "desconocido")
         chunk_id = meta.get("chunk_id", meta.get("id", f"doc_{i}"))
 
         # Chroma puede almacenar la clave con distintas variantes de encoding
-        corporacion = meta.get("Corporación") or meta.get("CorporaciÃ³n") or meta.get("Corporacion", "")
-        magistrado  = meta.get("Magistrado ponente", "")
-        tema        = meta.get("Tema principal", "")
-        section     = meta.get("section_name", "")
-        summary     = meta.get("summary", "")
+        corporacion = (
+            meta.get("Corporación") or meta.get("CorporaciÃ³n") or meta.get("Corporacion", "")
+        )
+        magistrado = meta.get("Magistrado ponente", "")
+        tema = meta.get("Tema principal", "")
+        section = meta.get("section_name", "")
+        summary = meta.get("summary", "")
 
         header = f"[doc{i} | source={source} | chunk_id={chunk_id}]"
         meta_lines: list[str] = []
@@ -307,11 +309,11 @@ def demo(
     print("\n=== CONTEXTO UTILIZADO ===")
     for i, d in enumerate(docs, start=1):
         meta = d.metadata or {}
-        src        = meta.get("source", "desconocido")
-        chunk_id   = meta.get("chunk_id", meta.get("id", f"doc_{i}"))
+        src = meta.get("source", "desconocido")
+        chunk_id = meta.get("chunk_id", meta.get("id", f"doc_{i}"))
         corporacion = meta.get("Corporación") or meta.get("CorporaciÃ³n") or ""
-        magistrado  = meta.get("Magistrado ponente", "")
-        section     = meta.get("section_name", "")
+        magistrado = meta.get("Magistrado ponente", "")
+        section = meta.get("section_name", "")
         print(f"\n[doc{i}] {src} | {chunk_id}")
         if corporacion:
             print(f"        Corporación: {corporacion}")
