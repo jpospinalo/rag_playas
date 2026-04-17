@@ -60,12 +60,39 @@ def sanitize_metadata(meta: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------
 
 
-def load_gold_records(path: str) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+def _build_embedding_text(text: str, meta: dict[str, Any]) -> str:
     """
-    Lee un archivo .jsonl de la capa GOLD y devuelve (ids, texts, metadatas).
+    Construye el texto aumentado para embedding combinando metadatos clave
+    con el contenido del chunk (Contextual Chunk Headers).
+
+    El vector resultante captura tanto el contenido semántico como el
+    contexto documental (sección, tema, keywords, resumen). El texto
+    original se almacena por separado en ChromaDB para que el LLM lo reciba limpio.
+    """
+    parts: list[str] = []
+    if kw := meta.get("keywords_str", ""):
+        parts.append(f"Palabras clave: {kw}")
+    if summary := meta.get("summary", ""):
+        parts.append(f"Resumen: {summary}")
+    if parts:
+        return "\n".join(parts) + "\n\n" + text
+    return text
+
+
+def load_gold_records(
+    path: str,
+) -> tuple[list[str], list[str], list[str], list[dict[str, Any]]]:
+    """
+    Lee un archivo .jsonl de la capa GOLD y devuelve
+    (ids, texts, embed_texts, metadatas).
+
+    - ``texts``       — page_content original; se almacena en Chroma como documento.
+    - ``embed_texts`` — texto aumentado con encabezados de metadatos; se usa solo
+                        para generar los embeddings (Contextual Chunk Headers).
     """
     ids: list[str] = []
     texts: list[str] = []
+    embed_texts: list[str] = []
     metadatas: list[dict[str, Any]] = []
 
     file_name = os.path.basename(path)
@@ -87,9 +114,10 @@ def load_gold_records(path: str) -> tuple[list[str], list[str], list[dict[str, A
             meta = sanitize_metadata(meta)
             ids.append(str(chunk_id))
             texts.append(text)
+            embed_texts.append(_build_embedding_text(text, meta))
             metadatas.append(meta)
 
-    return ids, texts, metadatas
+    return ids, texts, embed_texts, metadatas
 
 
 # ---------------------------------------------------------------------
@@ -131,7 +159,7 @@ def build_or_load_vectorstore(
 
     for file_idx, file_name in enumerate(file_names, start=1):
         path = os.path.join(gold_dir, file_name)
-        ids, texts, metadatas = load_gold_records(path)
+        ids, texts, embed_texts, metadatas = load_gold_records(path)
 
         if not ids:
             print(f'[{file_idx}/{total_files}] {file_name} → vacío → skipped')
@@ -149,11 +177,13 @@ def build_or_load_vectorstore(
 
         new_ids: list[str] = []
         new_texts: list[str] = []
+        new_embed_texts: list[str] = []
         new_metadatas: list[dict[str, Any]] = []
-        for i, t, m in zip(ids, texts, metadatas, strict=False):
+        for i, t, et, m in zip(ids, texts, embed_texts, metadatas, strict=False):
             if i in new_ids_set:
                 new_ids.append(i)
                 new_texts.append(t)
+                new_embed_texts.append(et)
                 new_metadatas.append(m)
 
         print(f'[{file_idx}/{total_files}] {file_name} | {len(ids)} chunks | {len(new_ids)} nuevos')
@@ -165,6 +195,7 @@ def build_or_load_vectorstore(
             end = start + BATCH_SIZE
             batch_ids = new_ids[start:end]
             batch_texts = new_texts[start:end]
+            batch_embed_texts = new_embed_texts[start:end]
             batch_metas = new_metadatas[start:end]
 
             if num_batches > 1:
@@ -172,7 +203,9 @@ def build_or_load_vectorstore(
 
             for attempt in range(MAX_RETRIES):
                 try:
-                    embeddings = EMBED_FN(batch_texts)
+                    # Los embeddings se generan desde el texto aumentado (contextual chunk
+                    # headers), pero se almacena el page_content original como documento.
+                    embeddings = EMBED_FN(batch_embed_texts)
                     collection.add(
                         ids=batch_ids,
                         documents=batch_texts,
