@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import csv
-from pathlib import Path
+import io
 
-METADATA_CSV = Path(__file__).resolve().parent.parent / "data" / "raw" / "metadata.csv"
+from .config import RAW_PREFIX
+from .s3_client import read_text
 
 _csv_cache: dict[str, dict] | None = None
 
@@ -16,12 +17,12 @@ def load_metadata_csv() -> dict[str, dict]:
         return _csv_cache
 
     _csv_cache = {}
-    with open(METADATA_CSV, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f, delimiter=";")
-        for row in reader:
-            archivo = row.get("Archivo", "").strip()
-            if archivo:
-                _csv_cache[archivo] = {k: v.strip() for k, v in row.items() if v.strip()}
+    content = read_text(f"{RAW_PREFIX}metadata.csv")
+    reader = csv.DictReader(io.StringIO(content), delimiter=";")
+    for row in reader:
+        archivo = row.get("Archivo", "").strip()
+        if archivo:
+            _csv_cache[archivo] = {k: v.strip() for k, v in row.items() if v.strip()}
     return _csv_cache
 
 

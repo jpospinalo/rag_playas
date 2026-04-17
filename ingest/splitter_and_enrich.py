@@ -21,7 +21,8 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
 
-from .config import GEMINI_ENRICHER_MODEL, GOLD_DIR, SILVER_DIR
+from .config import GEMINI_ENRICHER_MODEL, GOLD_PREFIX, SILVER_PREFIX
+from .s3_client import key_exists, list_keys
 from .utils import _load_docs_jsonl_file, save_docs_jsonl_per_file
 
 logger = logging.getLogger(__name__)
@@ -237,46 +238,45 @@ def _chunk_section(doc: Document, splitter: RecursiveCharacterTextSplitter) -> l
 
 
 def split_and_enrich_directory(
-    silver_dir: Path = SILVER_DIR,
-    gold_dir: Path = GOLD_DIR,
+    silver_prefix: str = SILVER_PREFIX,
+    gold_prefix: str = GOLD_PREFIX,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
     model_name: str = GEMINI_ENRICHER_MODEL,
     max_calls_per_minute: int = 9,
     skip_existing: bool = True,
 ) -> None:
-    """Lee documentos de *silver_dir*, los fragmenta y enriquece con Gemini,
-    escribiendo el resultado directamente en *gold_dir*.
+    """Lee documentos de S3 *silver_prefix*, los fragmenta y enriquece con Gemini,
+    escribiendo el resultado en S3 *gold_prefix*.
 
     Flujo por archivo:
-        1. Cargar secciones desde data/silver/<file>.jsonl
+        1. Cargar secciones desde s3://silver/<file>.jsonl
         2. Fragmentar cada sección no vacía con RecursiveCharacterTextSplitter
         3. Enriquecer cada chunk con Gemini (summary, keywords, entities)
-        4. Escribir chunks enriquecidos en data/gold/<file>.jsonl
+        4. Escribir chunks enriquecidos en s3://gold/<file>.jsonl
 
-    Los archivos ya presentes en gold_dir se saltan cuando skip_existing=True.
+    Los archivos ya presentes en gold_prefix se saltan cuando skip_existing=True.
     Los errores de enriquecimiento por chunk se loggean sin interrumpir el proceso.
     """
-    gold_dir.mkdir(parents=True, exist_ok=True)
-
-    silver_files = sorted(silver_dir.glob("*.jsonl"))
-    if not silver_files:
-        logger.warning("No se encontraron archivos .jsonl en %s", silver_dir)
+    silver_keys = list_keys(silver_prefix, suffix=".jsonl")
+    if not silver_keys:
+        logger.warning("No se encontraron archivos .jsonl en s3://%s", silver_prefix)
         return
 
     enricher = GeminiEnricher(model=model_name, max_calls_per_minute=max_calls_per_minute)
     splitter = _build_splitter(chunk_size, chunk_overlap)
 
-    for silver_file in silver_files:
-        gold_file = gold_dir / silver_file.name
+    for silver_key in silver_keys:
+        filename = silver_key.split("/")[-1]
+        gold_key = f"{gold_prefix}{filename}"
 
-        if skip_existing and gold_file.exists():
-            logger.info("Saltando %s (ya existe en gold)", silver_file.name)
-            print(f"[skip] {silver_file.name} ya existe en gold, se omite.")
+        if skip_existing and key_exists(gold_key):
+            logger.info("Saltando %s (ya existe en gold)", filename)
+            print(f"[skip] {filename} ya existe en gold, se omite.")
             continue
 
-        print(f"\n[proc] {silver_file.name}")
-        section_docs = _load_docs_jsonl_file(silver_file)
+        print(f"\n[proc] {filename}")
+        section_docs = _load_docs_jsonl_file(silver_key)
 
         all_chunks: list[Document] = []
         for doc in section_docs:
@@ -289,9 +289,7 @@ def split_and_enrich_directory(
 
         enriched: list[Document] = []
         for i, chunk in enumerate(all_chunks):
-            logger.debug(
-                "Enriqueciendo chunk %d/%d de %s", i + 1, len(all_chunks), silver_file.name
-            )
+            logger.debug("Enriqueciendo chunk %d/%d de %s", i + 1, len(all_chunks), filename)
             print(
                 f"  [{i + 1:>3}/{len(all_chunks)}] enriqueciendo chunk_id={chunk.metadata.get('chunk_id')}"
             )
@@ -316,8 +314,8 @@ def split_and_enrich_directory(
 
             enriched.append(chunk)
 
-        save_docs_jsonl_per_file(enriched, gold_dir)
-        print(f"  Guardados {len(enriched)} chunks enriquecidos -> {gold_file}")
+        save_docs_jsonl_per_file(enriched, gold_prefix)
+        print(f"  Guardados {len(enriched)} chunks enriquecidos -> s3://{gold_key}")
 
     print("\n[done] Proceso split_and_enrich completado.")
 

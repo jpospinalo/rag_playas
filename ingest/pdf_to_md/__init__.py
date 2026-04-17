@@ -9,11 +9,9 @@ Public API — import from this package directly:
 
 from .cleaner import adaptive_cleanup
 from .config import (
-    BASE_DIR,
-    BRONZE_DIR,
+    BRONZE_PREFIX,
     COASTAL_PATTERN,
     COASTAL_TERMS,
-    DATA_DIR,
     FOOTNOTE_LEGAL_CONTEXT,
     IMAGE_CONTEXT_RE,
     IMAGE_CONTEXT_WINDOW,
@@ -29,7 +27,7 @@ from .config import (
     MIN_IMAGE_PIXELS,
     OCR_CORRECTIONS,
     OCR_NOISE_THRESHOLD,
-    RAW_DIR,
+    RAW_PREFIX,
     REPEATED_FURNITURE_THRESHOLD,
 )
 from .furniture import detect_repeated_page_furniture, remove_page_furniture, split_into_pages
@@ -63,10 +61,8 @@ __all__ = [
     "LegalBlock",
     "DocumentQualityReport",
     # Config
-    "BASE_DIR",
-    "DATA_DIR",
-    "RAW_DIR",
-    "BRONZE_DIR",
+    "RAW_PREFIX",
+    "BRONZE_PREFIX",
     "IMAGE_RESOLUTION_SCALE",
     "MIN_IMAGE_PIXELS",
     "IMAGE_LOW_VARIANCE",

@@ -12,12 +12,9 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent  # project root
 load_dotenv(BASE_DIR / ".env")
 
-# ── Paths ──────────────────────────────────────────────────────────────────
-DATA_DIR = BASE_DIR / "data"
-RAW_DIR = DATA_DIR / "raw"
-BRONZE_DIR = DATA_DIR / "bronze"
-SILVER_DIR = DATA_DIR / "silver"
-GOLD_DIR = DATA_DIR / "gold"
+# ── S3 ─────────────────────────────────────────────────────────────────────
+S3_BUCKET_NAME: str = os.getenv("S3_BUCKET_NAME", "")
+GOLD_PREFIX: str = "data/gold/"
 
 # ── Chroma ─────────────────────────────────────────────────────────────────
 CHROMA_HOST: str = os.getenv("CHROMA_HOST", "localhost")

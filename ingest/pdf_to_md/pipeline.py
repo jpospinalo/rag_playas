@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
 import time
 import warnings
 from dataclasses import asdict
@@ -19,8 +20,9 @@ from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import ImageRefMode
 
+from ..s3_client import download_file, list_keys, upload_directory, upload_file
 from .cleaner import adaptive_cleanup
-from .config import BRONZE_DIR, IMAGE_RESOLUTION_SCALE, RAW_DIR
+from .config import BRONZE_PREFIX, IMAGE_RESOLUTION_SCALE, RAW_PREFIX
 from .images import relativize_image_refs
 from .models import DocumentQualityReport
 from .profiler import profile_legal_document
@@ -57,7 +59,7 @@ def _run_pipeline(
     output_dir: Path,
     converter: DocumentConverter,
 ) -> tuple[Path, DocumentQualityReport]:
-    """Run the full processing pipeline for a single PDF.
+    """Run the full processing pipeline for a single PDF (local paths only).
 
     Returns (md_path, quality_report).  Raises on failure.
     """
@@ -105,82 +107,106 @@ def _run_pipeline(
     return md_path, quality
 
 
-def convert_pdfs_to_markdown() -> list[Path]:
-    """Convert all PDFs from ``data/raw/`` to cleaned Markdown in ``data/bronze/``.
+def convert_pdfs_to_markdown() -> list[str]:
+    """Convierte todos los PDFs de S3 raw/ a Markdown limpio en S3 bronze/.
 
-    Full pipeline per PDF:
-    1. Docling OCR conversion
-    2. Markdown extraction
-    3. Legal document profiling
-    4. Adaptive cleanup
-    5. Semantic section segmentation
-    6. Coastal entity extraction
-    7. Quality evaluation
-    8. Write final ``.md`` + JSON sidecars
+    Estrategia:
+    1. Lista los PDFs en S3 raw/.
+    2. Descarga cada PDF a un directorio temporal.
+    3. Procesa con Docling (_run_pipeline) localmente.
+    4. Sube el .md y los sidecars (assets/, quality.json, entities.json) a S3 bronze/.
 
-    Returns list of generated ``.md`` files.
+    Devuelve la lista de S3 keys de los archivos .md generados.
     """
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-    BRONZE_DIR.mkdir(parents=True, exist_ok=True)
-
-    pdf_paths = sorted(RAW_DIR.glob("*.pdf"))
-    if not pdf_paths:
-        print(f"No PDFs found in {RAW_DIR}")
+    pdf_keys = list_keys(RAW_PREFIX, suffix=".pdf")
+    if not pdf_keys:
+        print(f"No PDFs found in s3://{RAW_PREFIX}")
         return []
 
-    print(f"Found {len(pdf_paths)} PDF(s) in {RAW_DIR}")
+    print(f"Found {len(pdf_keys)} PDF(s) in s3://{RAW_PREFIX}")
     print("=" * 60)
 
     converter = _build_converter()
-    generated: list[Path] = []
+    generated: list[str] = []
 
-    for pdf_path in pdf_paths:
-        print(f"\n📄 Processing: {pdf_path.name}")
+    with tempfile.TemporaryDirectory() as raw_tmp, tempfile.TemporaryDirectory() as bronze_tmp:
+        raw_tmp_path = Path(raw_tmp)
+        bronze_tmp_path = Path(bronze_tmp)
 
-        try:
-            md_path, quality = _run_pipeline(pdf_path, BRONZE_DIR, converter)
+        for pdf_key in pdf_keys:
+            pdf_name = pdf_key.split("/")[-1]
+            local_pdf = raw_tmp_path / pdf_name
 
-            print(f"   ⏱️  Time: {quality.processing_time_seconds:.1f}s")
-            print(f"   📊 Quality: {quality.final_quality:.1f}%")
-            print(f"   📑 Sections: {dict(quality.section_counts)}")
-            print(f"   🏖️  Coastal entities: {quality.entity_count}")
-            print(f"   ✅ Output: {md_path.name}")
+            print(f"\nProcessing: {pdf_name}")
+            download_file(pdf_key, str(local_pdf))
 
-            generated.append(md_path)
+            try:
+                md_path, quality = _run_pipeline(local_pdf, bronze_tmp_path, converter)
 
-        except Exception as e:
-            logger.error("Failed to process %s: %s", pdf_path.name, e)
-            print(f"   ❌ Error: {e}")
+                print(f"   Time: {quality.processing_time_seconds:.1f}s")
+                print(f"   Quality: {quality.final_quality:.1f}%")
+                print(f"   Sections: {dict(quality.section_counts)}")
+                print(f"   Coastal entities: {quality.entity_count}")
+
+                md_s3_key = f"{BRONZE_PREFIX}{md_path.name}"
+                upload_file(str(md_path), md_s3_key)
+
+                doc_dir = bronze_tmp_path / local_pdf.stem
+                if doc_dir.exists():
+                    upload_directory(str(doc_dir), f"{BRONZE_PREFIX}{local_pdf.stem}/")
+
+                print(f"   Uploaded: {md_s3_key}")
+                generated.append(md_s3_key)
+
+            except Exception as e:
+                logger.error("Failed to process %s: %s", pdf_name, e)
+                print(f"   Error: {e}")
 
     print("\n" + "=" * 60)
-    print(f"Conversion complete: {len(generated)}/{len(pdf_paths)} files in {BRONZE_DIR}")
+    print(f"Conversion complete: {len(generated)}/{len(pdf_keys)} files in s3://{BRONZE_PREFIX}")
 
     return generated
 
 
 def process_single_pdf(
-    pdf_path: Path,
-    output_dir: Path | None = None,
-) -> tuple[Path, DocumentQualityReport] | None:
-    """Process a single PDF through the full pipeline.
+    pdf_key: str,
+    output_prefix: str | None = None,
+) -> tuple[str, DocumentQualityReport] | None:
+    """Descarga un PDF de S3, lo procesa y sube el resultado.
 
     Args:
-        pdf_path:   Path to the input PDF.
-        output_dir: Output directory (defaults to ``BRONZE_DIR``).
+        pdf_key:       S3 key del PDF, e.g. "raw/mi_doc.pdf".
+        output_prefix: Prefijo S3 de salida (por defecto BRONZE_PREFIX).
 
     Returns:
-        ``(output_md_path, quality_report)`` or ``None`` on failure.
+        (md_s3_key, quality_report) o None en caso de error.
     """
-    output_dir = output_dir or BRONZE_DIR
-    output_dir.mkdir(parents=True, exist_ok=True)
-
+    output_prefix = output_prefix or BRONZE_PREFIX
     converter = _build_converter()
 
-    try:
-        return _run_pipeline(pdf_path, output_dir, converter)
-    except Exception as e:
-        logger.error("Failed to process %s: %s", pdf_path, e)
-        return None
+    with tempfile.TemporaryDirectory() as raw_tmp, tempfile.TemporaryDirectory() as bronze_tmp:
+        raw_tmp_path = Path(raw_tmp)
+        bronze_tmp_path = Path(bronze_tmp)
+
+        pdf_name = pdf_key.split("/")[-1]
+        local_pdf = raw_tmp_path / pdf_name
+        download_file(pdf_key, str(local_pdf))
+
+        try:
+            md_path, quality = _run_pipeline(local_pdf, bronze_tmp_path, converter)
+
+            md_s3_key = f"{output_prefix}{md_path.name}"
+            upload_file(str(md_path), md_s3_key)
+
+            doc_dir = bronze_tmp_path / local_pdf.stem
+            if doc_dir.exists():
+                upload_directory(str(doc_dir), f"{output_prefix}{local_pdf.stem}/")
+
+            return md_s3_key, quality
+
+        except Exception as e:
+            logger.error("Failed to process %s: %s", pdf_key, e)
+            return None
 
 
 def main() -> None:

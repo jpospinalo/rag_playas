@@ -1,53 +1,41 @@
-# src/ingest/loaders.py
+# ingest/loaders.py
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from dotenv import load_dotenv
 from langchain_core.documents import Document
 
+from .config import BRONZE_PREFIX, SILVER_PREFIX
 from .metadata_csv import get_metadata_for_file, load_metadata_csv
 from .normalize import normalize_documents
+from .s3_client import list_keys, read_text
 from .sections import split_by_sections
 from .utils import save_docs_jsonl_per_file
-
-load_dotenv()
-
-# Rutas base
-DATA_DIR = Path("data")
-BRONZE_DIR = DATA_DIR / "bronze"
-SILVER_DIR = DATA_DIR / "silver"
-
-
-# ---------------------------------------------------------------------
-# Funciones principales
-# ---------------------------------------------------------------------
 
 
 def load_documents() -> list[Document]:
     """
-    Carga Markdowns de data/bronze/ y genera la capa SILVER (JSONL).
+    Carga Markdowns de S3 bronze/ y genera la capa SILVER (JSONL en S3).
 
     Flujo:
-      1) Lee cada archivo .md de BRONZE_DIR.
+      1) Lee cada archivo .md de bronze/ en S3.
       2) Normaliza texto y metadatos.
-      3) Guarda un .jsonl por archivo en SILVER_DIR.
+      3) Guarda un .jsonl por archivo en silver/ en S3.
 
     Devuelve:
         Lista de Document de LangChain.
     """
-    md_files = sorted(BRONZE_DIR.glob("*.md"))
-    if not md_files:
-        print(f"No se encontraron archivos .md en {BRONZE_DIR}")
+    md_keys = sorted(list_keys(BRONZE_PREFIX, suffix=".md"))
+    if not md_keys:
+        print(f"No se encontraron archivos .md en s3://{BRONZE_PREFIX}")
         return []
 
     raw_docs: list[Document] = []
-    for md_path in md_files:
-        content = md_path.read_text(encoding="utf-8")
+    for key in md_keys:
+        content = read_text(key)
+        filename = key.split("/")[-1]
         doc = Document(
             page_content=content,
-            metadata={"source": md_path.name},
+            metadata={"source": filename},
         )
         raw_docs.append(doc)
 
@@ -86,8 +74,8 @@ def load_documents() -> list[Document]:
         f"\nSecciones detectadas: {detected}/{len(sectioned_docs)} con contenido ({len(docs)} documentos)"
     )
 
-    save_docs_jsonl_per_file(sectioned_docs, SILVER_DIR)
-    print(f"Guardado en: {SILVER_DIR}")
+    save_docs_jsonl_per_file(sectioned_docs, SILVER_PREFIX)
+    print(f"Guardado en: s3://{SILVER_PREFIX}")
 
     print(
         f"\nMetadatos CSV: {matched_count}/{csv_rows} filas con archivo ({len(docs)} documentos processados)\n"

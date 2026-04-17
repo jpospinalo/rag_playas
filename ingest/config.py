@@ -12,12 +12,14 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent  # project root
 load_dotenv(BASE_DIR / ".env")
 
-# ── Paths ──────────────────────────────────────────────────────────────────
-DATA_DIR = BASE_DIR / "data"
-RAW_DIR = DATA_DIR / "raw"
-BRONZE_DIR = DATA_DIR / "bronze"
-SILVER_DIR = DATA_DIR / "silver"
-GOLD_DIR = DATA_DIR / "gold"
+# ── S3 ─────────────────────────────────────────────────────────────────────
+S3_BUCKET_NAME: str = os.getenv("S3_BUCKET_NAME", "")
+
+# Prefijos de keys S3 (espejan la estructura local anterior data/*)
+RAW_PREFIX: str = "data/raw/"
+BRONZE_PREFIX: str = "data/bronze/"
+SILVER_PREFIX: str = "data/silver/"
+GOLD_PREFIX: str = "data/gold/"
 
 # ── Gemini ─────────────────────────────────────────────────────────────────
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")

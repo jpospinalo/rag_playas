@@ -6,7 +6,6 @@ directory paths for the PDF-to-Markdown pipeline.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 # ------------------------------------------------------------------
 # Image processing
@@ -149,10 +148,8 @@ COASTAL_PATTERN: re.Pattern[str] = re.compile(
 )
 
 # ------------------------------------------------------------------
-# Directory paths
+# S3 key prefixes
 # ------------------------------------------------------------------
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent  # project root
-DATA_DIR = BASE_DIR / "data"
-RAW_DIR = DATA_DIR / "raw"
-BRONZE_DIR = DATA_DIR / "bronze"
+RAW_PREFIX: str = "data/raw/"
+BRONZE_PREFIX: str = "data/bronze/"
