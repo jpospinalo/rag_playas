@@ -11,6 +11,7 @@ import chromadb
 from dotenv import load_dotenv
 
 from .embeddings import OllamaEmbeddingFunction
+from rag.s3_client import list_keys, read_text
 
 # ---------------------------------------------------------------------
 # Constantes y configuración
@@ -22,7 +23,7 @@ CHROMA_HOST = os.getenv("CHROMA_HOST")
 CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
 CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME")
 
-GOLD_DIR = "data/gold"
+from rag.config import GOLD_PREFIX
 
 EMBED_FN = OllamaEmbeddingFunction()
 
@@ -80,10 +81,10 @@ def _build_embedding_text(text: str, meta: dict[str, Any]) -> str:
 
 
 def load_gold_records(
-    path: str,
+    key: str,
 ) -> tuple[list[str], list[str], list[str], list[dict[str, Any]]]:
     """
-    Lee un archivo .jsonl de la capa GOLD y devuelve
+    Descarga un objeto .jsonl de S3 (capa GOLD) y devuelve
     (ids, texts, embed_texts, metadatas).
 
     - ``texts``       — page_content original; se almacena en Chroma como documento.
@@ -95,27 +96,27 @@ def load_gold_records(
     embed_texts: list[str] = []
     metadatas: list[dict[str, Any]] = []
 
-    file_name = os.path.basename(path)
-    with open(path, encoding="utf-8") as f:
-        for line_idx, line in enumerate(f):
-            line = line.strip()
-            if not line:
-                continue
-            rec = json.loads(line)
-            text = rec.get("page_content") or rec.get("text") or rec.get("content") or ""
-            if not text.strip():
-                continue
-            meta: dict[str, Any] = rec.get("metadata", {}) or {}
-            chunk_id = meta.get("chunk_id") or f"{file_name}_line_{line_idx}"
-            meta["chunk_id"] = chunk_id
-            meta.setdefault("source", meta.get("source", file_name))
-            if isinstance(meta.get("keywords"), list):
-                meta["keywords_str"] = ", ".join(meta["keywords"])
-            meta = sanitize_metadata(meta)
-            ids.append(str(chunk_id))
-            texts.append(text)
-            embed_texts.append(_build_embedding_text(text, meta))
-            metadatas.append(meta)
+    file_name = key.split("/")[-1]
+    content = read_text(key)
+    for line_idx, line in enumerate(content.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        rec = json.loads(line)
+        text = rec.get("page_content") or rec.get("text") or rec.get("content") or ""
+        if not text.strip():
+            continue
+        meta: dict[str, Any] = rec.get("metadata", {}) or {}
+        chunk_id = meta.get("chunk_id") or f"{file_name}_line_{line_idx}"
+        meta["chunk_id"] = chunk_id
+        meta.setdefault("source", meta.get("source", file_name))
+        if isinstance(meta.get("keywords"), list):
+            meta["keywords_str"] = ", ".join(meta["keywords"])
+        meta = sanitize_metadata(meta)
+        ids.append(str(chunk_id))
+        texts.append(text)
+        embed_texts.append(_build_embedding_text(text, meta))
+        metadatas.append(meta)
 
     return ids, texts, embed_texts, metadatas
 
@@ -126,11 +127,11 @@ def load_gold_records(
 
 
 def build_or_load_vectorstore(
-    gold_dir: str = GOLD_DIR,
+    gold_prefix: str = GOLD_PREFIX,
     collection_name: str = CHROMA_COLLECTION_NAME,
 ):
     """
-    Construye (o actualiza) una colección Chroma a partir de la capa GOLD.
+    Construye (o actualiza) una colección Chroma a partir de la capa GOLD en S3.
 
     Comportamiento:
       - Conecta a Chroma vía HttpClient.
@@ -145,11 +146,11 @@ def build_or_load_vectorstore(
     collection = client.get_or_create_collection(name=collection_name)
 
     count_before = collection.count()
-    file_names = sorted(f for f in os.listdir(gold_dir) if f.endswith(".jsonl"))
-    total_files = len(file_names)
+    gold_keys = list_keys(gold_prefix, suffix=".jsonl")
+    total_files = len(gold_keys)
 
-    if not file_names:
-        raise RuntimeError(f"No se encontraron archivos .jsonl en {gold_dir}")
+    if not gold_keys:
+        raise RuntimeError(f"No se encontraron archivos .jsonl en s3://{gold_prefix}")
 
     print(f"[Chroma] Colección: {count_before} docs → ingestando {total_files} archivos...")
 
@@ -157,9 +158,9 @@ def build_or_load_vectorstore(
     files_indexed = 0
     files_skipped = 0
 
-    for file_idx, file_name in enumerate(file_names, start=1):
-        path = os.path.join(gold_dir, file_name)
-        ids, texts, embed_texts, metadatas = load_gold_records(path)
+    for file_idx, key in enumerate(gold_keys, start=1):
+        file_name = key.split("/")[-1]
+        ids, texts, embed_texts, metadatas = load_gold_records(key)
 
         if not ids:
             print(f"[{file_idx}/{total_files}] {file_name} → vacío → skipped")
