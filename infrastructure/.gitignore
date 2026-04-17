@@ -1,0 +1,13 @@
+# Estado local de Terraform
+*.tfstate
+*.tfstate.backup
+
+# Directorio de trabajo de Terraform
+.terraform/
+
+# Planes de ejecución
+*.tfplan
+
+# Variables con datos sensibles
+*.tfvars
+!*.tfvars.example

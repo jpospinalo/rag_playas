@@ -98,6 +98,14 @@ rag_playas/
 │   ├── ragas_eval_gemma.py
 │   └── ragas_eval_ollama.py
 │
+├── infrastructure/              # Terraform (AWS)
+│   ├── terraform.tf
+│   ├── providers.tf
+│   ├── variables.tf
+│   ├── locals.tf
+│   ├── main.tf
+│   └── outputs.tf
+│
 ├── docs/
 ├── scripts/
 │   ├── ec2_chroma_db.sh
@@ -170,7 +178,33 @@ cp .env.example .env
 
 Antes de ejecutar el pipeline se necesitan dos instancias EC2. Se recomienda asignar una **IP elástica** a cada una para estabilizar las variables de entorno.
 
-### EC2 — ChromaDB
+### Opción A — Terraform (recomendado)
+
+La carpeta `infrastructure/` contiene la configuración de Terraform para provisionar ambas máquinas automáticamente:
+
+| Máquina   | Tipo        | Almacenamiento | Puerto | AMI                  |
+| --------- | ----------- | -------------- | ------ | -------------------- |
+| ChromaDB  | `t3.medium` | 12 GB gp3      | `8000` | Ubuntu Server 24.04  |
+| Ollama    | `t3.large`  | 20 GB gp3      | `11434`| Ubuntu Server 24.04  |
+
+Cada instancia tiene una IP elástica asignada y ejecuta su script de setup automáticamente al iniciarse.
+
+Instala Terraform desde [developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install), luego:
+
+```bash
+cd infrastructure/
+terraform init
+terraform plan
+terraform apply
+```
+
+Al terminar, `terraform output` muestra las IPs elásticas para configurar el `.env`.
+
+### Opción B — Setup manual
+
+Si ya tienes las instancias creadas, conéctate a cada una y ejecuta el script correspondiente:
+
+#### EC2 — ChromaDB
 
 ```bash
 bash scripts/ec2_chroma_db.sh
@@ -178,7 +212,7 @@ bash scripts/ec2_chroma_db.sh
 
 Lanza ChromaDB en Docker con persistencia en `/opt/chroma-data`, expuesto en el puerto `8000`.
 
-### EC2 — Ollama (embeddings)
+#### EC2 — Ollama (embeddings)
 
 ```bash
 bash scripts/ec2_ollama_embeddings.sh
@@ -265,5 +299,6 @@ make test           # tests unitarios
 make test-cov       # tests + cobertura
 make pipeline       # ejecutar pipeline completo de ingesta
 make app            # lanzar la API FastAPI
+make frontend       # lanzar frontend con NextJS
 make help           # ver todos los comandos
 ```

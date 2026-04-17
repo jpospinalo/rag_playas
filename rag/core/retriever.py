@@ -61,12 +61,34 @@ def _get_chroma_vectorstore() -> Chroma:
 
 
 def _get_bm25_base() -> BM25Retriever:
-    """Construye el índice BM25 una sola vez y lo reutiliza entre requests."""
+    """
+    Construye el índice BM25 una sola vez y lo reutiliza entre requests.
+
+    El corpus se indexa con texto aumentado (page_content + keywords_str + summary)
+    para mejorar el recall con terminología jurídica curada por Gemini, pero los
+    documentos devueltos conservan el page_content original sin modificaciones.
+    """
     global _bm25_base
     if _bm25_base is None:
+        from langchain_community.retrievers.bm25 import default_preprocessing_func
+        from rank_bm25 import BM25Okapi
+
         docs = load_all_docs_from_chroma()
+
+        augmented_texts: list[str] = []
+        for d in docs:
+            meta = d.metadata or {}
+            parts = [d.page_content]
+            if kw := meta.get("keywords_str", ""):
+                parts.append(kw)
+            if sm := meta.get("summary", ""):
+                parts.append(sm)
+            augmented_texts.append(" ".join(parts))
+
+        corpus = [default_preprocessing_func(t) for t in augmented_texts]
+        vectorizer = BM25Okapi(corpus)
         # k=50 como techo máximo; se limita en get_bm25_retriever()
-        _bm25_base = BM25Retriever.from_documents(docs, k=50)
+        _bm25_base = BM25Retriever(vectorizer=vectorizer, docs=docs, k=50)
     return _bm25_base
 
 

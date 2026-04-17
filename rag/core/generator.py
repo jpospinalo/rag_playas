@@ -25,15 +25,42 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 def _build_context_block(docs: list[Document]) -> str:
     """
     Convierte la lista de documentos en un bloque de contexto legible,
-    incluyendo metadatos básicos (source, chunk_id).
+    incluyendo metadatos de atribución (corporación, magistrado, tema,
+    sección y resumen) para que el LLM pueda citar correctamente las fuentes.
     """
     bloques: list[str] = []
     for i, d in enumerate(docs, start=1):
         meta = d.metadata or {}
         source = meta.get("source", "desconocido")
         chunk_id = meta.get("chunk_id", meta.get("id", f"doc_{i}"))
-        bloque = f"[doc{i} | source={source} | chunk_id={chunk_id}]\n{d.page_content}"
-        bloques.append(bloque)
+
+        # Chroma puede almacenar la clave con distintas variantes de encoding
+        corporacion = (
+            meta.get("Corporación") or meta.get("CorporaciÃ³n") or meta.get("Corporacion", "")
+        )
+        magistrado = meta.get("Magistrado ponente", "")
+        tema = meta.get("Tema principal", "")
+        section = meta.get("section_name", "")
+        summary = meta.get("summary", "")
+
+        header = f"[doc{i} | source={source} | chunk_id={chunk_id}]"
+        meta_lines: list[str] = []
+        if corporacion:
+            meta_lines.append(f"Corporación: {corporacion}")
+        if magistrado:
+            meta_lines.append(f"Magistrado ponente: {magistrado}")
+        if tema:
+            meta_lines.append(f"Tema principal: {tema}")
+        if section:
+            meta_lines.append(f"Sección: {section}")
+        if summary:
+            meta_lines.append(f"Resumen: {summary}")
+
+        parts = [header]
+        if meta_lines:
+            parts.append("\n".join(meta_lines))
+        parts.append(d.page_content)
+        bloques.append("\n".join(parts))
 
     return "\n\n".join(bloques)
 
@@ -258,7 +285,13 @@ async def generate_answer_stream(
 # ---------------------------------------------------------------------
 
 
-def demo(question: str = "¿quién era Leonora?") -> None:
+def demo(
+    question: str = (
+        "¿Cuáles son los criterios jurídicos que ha establecido el Consejo de Estado "
+        "para determinar si una zona de playa es un bien de uso público y cuáles son "
+        "las implicaciones para las concesiones otorgadas a particulares?"
+    ),
+) -> None:
     answer, docs, expanded_query = generate_answer(
         question=question,
         k=5,
@@ -278,9 +311,18 @@ def demo(question: str = "¿quién era Leonora?") -> None:
         meta = d.metadata or {}
         src = meta.get("source", "desconocido")
         chunk_id = meta.get("chunk_id", meta.get("id", f"doc_{i}"))
-        print(f"\n[doc{i}] source={src} | chunk_id={chunk_id}")
-        print(d.page_content.replace("\n", " "))
+        corporacion = meta.get("Corporación") or meta.get("CorporaciÃ³n") or ""
+        magistrado = meta.get("Magistrado ponente", "")
+        section = meta.get("section_name", "")
+        print(f"\n[doc{i}] {src} | {chunk_id}")
+        if corporacion:
+            print(f"        Corporación: {corporacion}")
+        if magistrado:
+            print(f"        Magistrado:  {magistrado}")
+        if section:
+            print(f"        Sección:     {section}")
+        print("       ", d.page_content[:200].replace("\n", " "), "...")
 
 
 if __name__ == "__main__":
-    demo(question="¿Cómo murió la esposa del narrador del cuento del gato negro?")
+    demo()

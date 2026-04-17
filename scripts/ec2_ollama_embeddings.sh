@@ -1,17 +1,40 @@
-sudo apt-get update && sudo apt-get upgrade -y
+#!/bin/bash
+set -e
 
-sudo apt-get install -y docker.io
+# Logs
+exec > /var/log/user-data-ollama.log 2>&1
 
-sudo systemctl enable --now docker
+echo "==== INICIO SETUP OLLAMA ===="
 
-sudo docker volume create ollama
+# Actualizar sistema
+apt-get update -y
+apt-get upgrade -y
 
-sudo docker run -d \
+# Instalar Docker
+apt-get install -y docker.io
+
+# Habilitar y arrancar Docker
+systemctl enable docker
+systemctl start docker
+
+echo "Esperando a que Docker esté listo..."
+sleep 10
+
+# Crear volumen persistente
+docker volume create ollama
+
+# Ejecutar contenedor
+docker run -d \
   --name ollama \
   --restart always \
   -p 11434:11434 \
   -v ollama:/root/.ollama \
   ollama/ollama
 
-sudo docker exec -it ollama ollama pull embeddinggemma:latest
+echo "Esperando a que Ollama levante..."
+sleep 15
 
+# Descargar modelo
+docker exec ollama ollama pull embeddinggemma:latest
+
+echo "==== FIN SETUP OLLAMA ===="
